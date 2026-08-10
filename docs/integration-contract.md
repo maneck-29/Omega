@@ -17,10 +17,14 @@ behind the repository interface; behaviour was exercised against the in-memory
 implementation, which reproduces the same semantics (see
 [database.md](database.md)).
 
-Two stubs stand in for other people's work and are marked for replacement:
+TM2's slice is implemented: post CRUD, the four sorts, polymorphic voting for
+posts and comments, search, filtering and pagination. `src/lib/scores.ts` is a
+real `ScoreProvider` and `VOTING_AVAILABLE` is `true`, so score-dependent
+comment sorts no longer degrade to chronological.
+
+One stub remains:
 
 - `src/lib/auth.ts` — TM1 replaces `getCurrentUser()` and `getUsersByIds()`
-- `src/lib/scores.ts` — TM2 replaces `getScoreProvider()`
 
 ## Storage
 
@@ -73,15 +77,25 @@ bans are testable before login exists.
 
 ### From TM2
 
-| Need | Why |
-| --- | --- |
-| votes keyed by `(target_type, target_id)` | one table and one UI for post and comment votes |
-| `ScoreProvider` implementation | comment sorts: best, top, controversial |
-| `removed_at` / `removed_by` on `posts` | TM3's moderation flags posts, TM2 stores the flag |
-| post list component accepting `subredditId` | rendered into TM3's subreddit page slot |
+All four are delivered:
 
-Until the real provider lands, `VOTING_AVAILABLE` is `false`: vote controls are
-hidden and score-dependent sorts fall back to chronological.
+| Need | Status |
+| --- | --- |
+| votes keyed by `(target_type, target_id)` | `votes` table, composite PK `(target_type, target_id, voter_id)` |
+| `ScoreProvider` implementation | `src/lib/scores.ts`, backed by `Repository.getScores` |
+| `removed_at` / `removed_by` on `posts` | columns exist; set via `POST /api/subreddits/[slug]/moderation/posts`, and excluded from every listing, sort and search by the repository filter |
+| post list component accepting `subredditId` | `src/components/post-list.tsx`, rendered through `post-list-slot.tsx` |
+
+`VOTING_AVAILABLE` is now `true`, so vote controls render and `best`, `top` and
+`controversial` comment sorts use real scores.
+
+Two notes for whoever provisions the cluster:
+
+- `posts` and `votes` DDL is in `drizzle/0001_posts_votes.sql`, a separate file
+  because DSQL allows one DDL statement per transaction
+- vote tallies on `posts` are recomputed from the `votes` table inside the vote
+  transaction rather than incremented, so the write stays idempotent under OCC
+  retries; `Repository.recordVotes` is the bulk path used by fixtures
 
 ## What TM3 provides
 
@@ -172,11 +186,22 @@ Comments
 | `PATCH` | `/api/comments/[commentId]` — author only |
 | `DELETE` | `/api/comments/[commentId]?subreddit=` — author or mod, soft delete |
 
+Posts and voting (TM2)
+
+| Method | Route |
+| --- | --- |
+| `GET` | `/api/posts` — feed. `?sort=hot\|new\|top\|controversial\|foryou`, `?q=`, `?type=text\|link\|image`, `?window=day\|week\|all`, `?subreddit=`, `?feed=subscribed`, `?author=`, `?limit=`, `?offset=` |
+| `POST` | `/api/posts` — create a post |
+| `GET`/`PATCH`/`DELETE` | `/api/posts/[postId]` — read, edit, soft-delete (author only) |
+| `POST` | `/api/votes` — `{ targetId, value: 1 \| -1, targetType: post \| comment }` |
+| `POST` | `/api/ai/generate` — Bedrock-drafted post title |
+
 Moderation
 
 | Method | Route |
 | --- | --- |
 | `POST` | `/api/subreddits/[slug]/moderation/comments` — remove/approve |
+| `POST` | `/api/subreddits/[slug]/moderation/posts` — remove/approve (TM2) |
 | `GET`/`POST`/`DELETE` | `/api/subreddits/[slug]/moderation/bans` |
 
 ## Fixtures
