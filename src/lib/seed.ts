@@ -13,10 +13,19 @@ import { getRepository } from "./db";
 import { createComment } from "./comments";
 import { createSubreddit } from "./subreddits";
 
-/** Stable IDs so TM2 can attach real posts to these threads later. */
+/**
+ * Stable IDs so the fixture comment threads and the fixture posts refer to the
+ * same rows.
+ *
+ * These must be real UUIDs. `posts.id` and `comments.post_id` are both UUID
+ * columns, so a readable placeholder like "post-fixture-1" inserts fine into the
+ * in-memory store but is rejected outright by Aurora DSQL — the kind of
+ * difference that only shows up after deployment. Fixed literals keep the
+ * reproducibility that readable ids were there for.
+ */
 export const FIXTURE_POSTS = {
-  typescript: "post-fixture-1",
-  webdev: "post-fixture-2",
+  typescript: "11111111-1111-4111-8111-111111111111",
+  webdev: "22222222-2222-4222-8222-222222222222",
 } as const;
 
 let seeding: Promise<void> | null = null;
@@ -158,6 +167,8 @@ async function seedPosts(context: {
     ageHours: number;
     up: number;
     down: number;
+    /** Set for the two posts the fixture comment threads hang off. */
+    id?: string;
   }> = [
     {
       subredditId: context.typescript,
@@ -171,6 +182,8 @@ async function seedPosts(context: {
       ageHours: 30,
       up: 21,
       down: 19, // near-even split: leads `controversial`
+      // The fixture comment thread for r/typescript hangs off this post.
+      id: FIXTURE_POSTS.typescript,
     },
     {
       subredditId: context.typescript,
@@ -196,6 +209,8 @@ async function seedPosts(context: {
       ageHours: 50,
       up: 60,
       down: 4, // oldest but highest score: leads `top`, never `hot`
+      // The fixture comment thread for r/webdev hangs off this post.
+      id: FIXTURE_POSTS.webdev,
     },
     {
       subredditId: context.webdev,
@@ -272,15 +287,26 @@ async function seedPosts(context: {
       url: fixture.url,
       imageUrl: fixture.imageUrl,
       createdAt: hoursAgo(fixture.ageHours),
+      id: fixture.id,
     });
 
-    // Synthetic voter ids, so the fixture spread survives a real vote landing.
-    for (let i = 0; i < fixture.up; i += 1) {
-      await repo.castVote("post", post.id, `seed-up-${post.id}-${i}`, 1);
-    }
-    for (let i = 0; i < fixture.down; i += 1) {
-      await repo.castVote("post", post.id, `seed-down-${post.id}-${i}`, -1);
-    }
+    /*
+     * Synthetic voter ids, so the fixture spread survives real votes landing on
+     * top of it. Recorded in one batch: castVote refreshes tallies per call, so
+     * casting these individually would be hundreds of transactions on DSQL.
+     */
+    const votes: Array<{ voterId: string; value: 1 | -1 }> = [
+      ...Array.from({ length: fixture.up }, (_, i) => ({
+        voterId: `seed-up-${post.id}-${i}`,
+        value: 1 as const,
+      })),
+      ...Array.from({ length: fixture.down }, (_, i) => ({
+        voterId: `seed-down-${post.id}-${i}`,
+        value: -1 as const,
+      })),
+    ];
+
+    await repo.recordVotes("post", post.id, votes);
   }
 }
 

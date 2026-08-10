@@ -442,7 +442,7 @@ export const memoryRepository: Repository = {
 
   async createPost(input: CreatePostInput) {
     const post: Post = {
-      id: crypto.randomUUID(),
+      id: input.id ?? crypto.randomUUID(),
       subredditId: input.subredditId,
       authorId: input.authorId,
       title: input.title,
@@ -552,6 +552,34 @@ export const memoryRepository: Repository = {
     }
 
     return result;
+  },
+
+  async recordVotes(targetType, targetId, votes) {
+    for (const { voterId, value } of votes) {
+      const existing = db.votes.find(
+        (v) =>
+          v.targetType === targetType &&
+          v.targetId === targetId &&
+          v.voterId === voterId,
+      );
+
+      if (!existing) {
+        db.votes.push({
+          targetType,
+          targetId,
+          voterId,
+          value,
+          createdAt: now(),
+          updatedAt: null,
+        });
+      } else if (existing.value !== value) {
+        existing.value = value;
+        existing.updatedAt = now();
+      }
+    }
+
+    // One recompute for the whole batch, rather than one per vote.
+    return refreshTallies(targetType, targetId, null);
   },
 
   async listVotedTargetIds(voterId, targetType, value, limit = 25) {

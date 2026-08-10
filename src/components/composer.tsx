@@ -15,6 +15,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { PostType } from "@/lib/types";
+import { POST_CREATED_EVENT } from "./events";
 
 type SubredditOption = { id: string; name: string; slug: string };
 
@@ -166,9 +167,14 @@ export default function Composer({
 
       reset();
       onClose();
-      // The feed is a client component with its own paging state; a reload is
-      // the simplest way to show the new post in correct rank order.
-      window.location.reload();
+
+      /*
+       * The composer lives in the layout's bottom navigation while the feed is a
+       * separate client component with its own paging state, so there is no
+       * parent to notify. A window event bridges them: the feed reloads its first
+       * page in place instead of the whole document reloading.
+       */
+      window.dispatchEvent(new CustomEvent(POST_CREATED_EVENT));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not post");
     } finally {

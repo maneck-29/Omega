@@ -746,7 +746,7 @@ export const dsqlRepository: Repository = {
     const [row] = await getDb()
       .insert(postsTable)
       .values({
-        id: crypto.randomUUID(),
+        id: input.id ?? crypto.randomUUID(),
         subredditId: input.subredditId,
         authorId: input.authorId,
         title: input.title,
@@ -988,6 +988,83 @@ export const dsqlRepository: Repository = {
     }
 
     return result;
+  },
+
+  async recordVotes(targetType, targetId, votes) {
+    /*
+     * One transaction for the whole batch, then a single tally refresh.
+     *
+     * `castVote` recomputes tallies per call, which turns seeding a few hundred
+     * fixture votes into a few hundred transactions. Same end state, one round
+     * trip.
+     *
+     * Chunked well inside DSQL's 3,000-rows-per-transaction cap, and idempotent:
+     * a re-run overwrites the same voter rows rather than adding duplicates.
+     */
+    const CHUNK = 500;
+
+    return withTransaction(async (tx) => {
+      for (let start = 0; start < votes.length; start += CHUNK) {
+        const chunk = votes.slice(start, start + CHUNK);
+
+        // Clear any prior vote by these voters, so a re-run overwrites rather
+        // than colliding with the composite primary key.
+        for (const { voterId } of chunk) {
+          await tx
+            .delete(votesTable)
+            .where(
+              and(
+                eq(votesTable.targetType, targetType),
+                eq(votesTable.targetId, targetId),
+                eq(votesTable.voterId, voterId),
+              ),
+            );
+        }
+
+        if (chunk.length > 0) {
+          await tx.insert(votesTable).values(
+            chunk.map(({ voterId, value }) => ({
+              targetType,
+              targetId,
+              voterId,
+              value,
+            })),
+          );
+        }
+      }
+
+      const [tally] = await tx
+        .select({
+          upvotes: sql<number>`coalesce(sum(case when ${votesTable.value} = 1 then 1 else 0 end), 0)::int`,
+          downvotes: sql<number>`coalesce(sum(case when ${votesTable.value} = -1 then 1 else 0 end), 0)::int`,
+        })
+        .from(votesTable)
+        .where(
+          and(
+            eq(votesTable.targetType, targetType),
+            eq(votesTable.targetId, targetId),
+          ),
+        );
+
+      const upvotes = Number(tally?.upvotes ?? 0);
+      const downvotes = Number(tally?.downvotes ?? 0);
+
+      if (targetType === "post") {
+        await tx
+          .update(postsTable)
+          .set({ upvotes, downvotes, score: upvotes - downvotes })
+          .where(eq(postsTable.id, targetId));
+      }
+
+      return {
+        targetType,
+        targetId,
+        score: upvotes - downvotes,
+        upvotes,
+        downvotes,
+        viewerVote: 0 as const,
+      };
+    });
   },
 
   async listVotedTargetIds(voterId, targetType, value, limit = 25) {

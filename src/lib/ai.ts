@@ -49,8 +49,104 @@ function getClient(): BedrockRuntimeClient {
   return client;
 }
 
-/** A model that fails once is skipped for the rest of the process lifetime. */
-const deadModels = new Set<string>();
+/**
+ * Why a model was skipped, and for how long.
+ *
+ * The distinction matters: a model the account genuinely cannot call should not
+ * be retried on every request, but a failure caused by expired credentials or
+ * throttling says nothing about the model. Blacklisting on those would disable
+ * AI for the life of the process — a credential refresh would never be picked
+ * up, and the feature would silently stay in fallback for no reason.
+ */
+const COOLDOWN_MS = {
+  /** Model is not enabled or does not exist here: unlikely to change soon. */
+  unavailable: 30 * 60 * 1000,
+  /** Throttled: back off briefly, then try again. */
+  throttled: 30 * 1000,
+} as const;
+
+/** modelId -> timestamp after which it may be retried. */
+const cooldowns = new Map<string, number>();
+
+/**
+ * Errors that are about the caller or the connection, never about the model.
+ * These must not put a model on cooldown at all.
+ */
+function isTransientAuthOrNetworkError(name: string, message: string): boolean {
+  const signals = [
+    "expiredtoken",
+    "expired",
+    "credential",
+    "unrecognizedclient",
+    "invalidsignature",
+    "notauthorized",
+    "timeout",
+    "networkingerror",
+    "econnreset",
+    "enotfound",
+    "socket",
+  ];
+  const haystack = `${name} ${message}`.toLowerCase();
+  return signals.some((signal) => haystack.includes(signal));
+}
+
+function isThrottlingError(name: string, message: string): boolean {
+  const haystack = `${name} ${message}`.toLowerCase();
+  return (
+    haystack.includes("throttl") ||
+    haystack.includes("too many requests") ||
+    haystack.includes("serviceunavailable") ||
+    haystack.includes("modelnotready")
+  );
+}
+
+function noteFailure(modelId: string, cause: unknown): void {
+  const name = cause instanceof Error ? cause.name : "";
+  const message = cause instanceof Error ? cause.message : String(cause);
+
+  if (isTransientAuthOrNetworkError(name, message)) {
+    // Deliberately no cooldown: refreshed credentials must take effect at once.
+    console.warn(`[ai] ${modelId} failed for a transient reason: ${message}`);
+    return;
+  }
+
+  const cooldown = isThrottlingError(name, message)
+    ? COOLDOWN_MS.throttled
+    : COOLDOWN_MS.unavailable;
+
+  cooldowns.set(modelId, Date.now() + cooldown);
+  console.warn(
+    `[ai] ${modelId} unavailable, retrying in ${Math.round(cooldown / 1000)}s: ${message}`,
+  );
+}
+
+function isOnCooldown(modelId: string): boolean {
+  const until = cooldowns.get(modelId);
+  if (until === undefined) return false;
+  if (until > Date.now()) return true;
+
+  cooldowns.delete(modelId);
+  return false;
+}
+
+/** Diagnostics for the health endpoint: which models are currently skipped. */
+export function bedrockStatus(): {
+  region: string;
+  candidates: string[];
+  cooledDown: Array<{ modelId: string; retryInSeconds: number }>;
+} {
+  const now = Date.now();
+  return {
+    region: REGION,
+    candidates: MODEL_CANDIDATES,
+    cooledDown: [...cooldowns.entries()]
+      .filter(([, until]) => until > now)
+      .map(([modelId, until]) => ({
+        modelId,
+        retryInSeconds: Math.max(0, Math.round((until - now) / 1000)),
+      })),
+  };
+}
 
 async function converse(options: {
   system: string;
@@ -58,7 +154,13 @@ async function converse(options: {
   maxTokens?: number;
   temperature?: number;
 }): Promise<{ text: string; model: string } | null> {
-  for (const modelId of MODEL_CANDIDATES.filter((id) => !deadModels.has(id))) {
+  const candidates = MODEL_CANDIDATES.filter((id) => !isOnCooldown(id));
+
+  // Every candidate is cooling down: try the whole list anyway rather than
+  // returning a fallback without attempting a single call.
+  const attempts = candidates.length > 0 ? candidates : MODEL_CANDIDATES;
+
+  for (const modelId of attempts) {
     try {
       const response = await getClient().send(
         new ConverseCommand({
@@ -77,11 +179,13 @@ async function converse(options: {
         .join("")
         .trim();
 
-      if (text) return { text, model: modelId };
+      if (text) {
+        // A success clears any prior cooldown for this model.
+        cooldowns.delete(modelId);
+        return { text, model: modelId };
+      }
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause);
-      console.warn(`[ai] model ${modelId} unavailable: ${message}`);
-      deadModels.add(modelId);
+      noteFailure(modelId, cause);
     }
   }
 
@@ -200,7 +304,13 @@ const interestCache = new Map<
   string,
   { topics: string[]; source: AiSource; basedOn: number; expiresAt: number }
 >();
-const INTEREST_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * A Bedrock-derived result is worth holding for a while. A fallback result is
+ * cached far more briefly, so that once Bedrock is reachable again the next
+ * request upgrades instead of serving keyword output for another five minutes.
+ */
+const INTEREST_TTL_MS = { bedrock: 5 * 60 * 1000, fallback: 20 * 1000 } as const;
 
 export async function inferInterests(viewerId: UserId | null): Promise<Interests> {
   if (!viewerId) return { topics: [], source: "fallback", basedOn: 0 };
@@ -263,7 +373,7 @@ export async function inferInterests(viewerId: UserId | null): Promise<Interests
 
   interestCache.set(viewerId, {
     ...interests,
-    expiresAt: Date.now() + INTEREST_TTL_MS,
+    expiresAt: Date.now() + INTEREST_TTL_MS[source],
   });
 
   return interests;

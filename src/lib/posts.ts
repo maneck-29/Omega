@@ -18,7 +18,7 @@ import { getUsersByIds } from "./auth";
 import { getCommentCount } from "./comments";
 import { getRepository } from "./db";
 import { badRequest, forbidden, notFound } from "./errors";
-import { assertCanPost } from "./permissions";
+import { assertCanPost, assertModerator } from "./permissions";
 import { getScoreProvider } from "./scores";
 import type {
   Post,
@@ -367,4 +367,53 @@ export async function deletePost(
 ): Promise<void> {
   await loadOwnPost(id, viewerId);
   await getRepository().softDeletePost(id);
+}
+
+/**
+ * Moderator removal or approval.
+ *
+ * TM3's moderation owns the decision; TM2 owns the `removedAt`/`removedBy`
+ * columns and every query that has to respect them, so the write lives here.
+ * Mirrors `setCommentRemoved` in `comments.ts`: moderator-gated, distinct from
+ * author deletion, and recorded in the mod log.
+ *
+ * Without this, `removedAt` was unreachable — the filter existed but nothing
+ * could ever set the flag.
+ */
+export async function setPostRemoved(input: {
+  postId: PostId;
+  actorId: UserId;
+  subredditId: SubredditId;
+  removed: boolean;
+  reason?: string | null;
+}): Promise<Post> {
+  const repo = getRepository();
+  await assertModerator(input.actorId, input.subredditId);
+
+  const post = await repo.getPostById(input.postId);
+  if (!post) throw notFound("Post not found", "post_not_found");
+
+  // A post can only be moderated in the community it was posted to.
+  if (post.subredditId !== input.subredditId) {
+    throw forbidden(
+      "That post is not in this community",
+      "post_wrong_subreddit",
+    );
+  }
+
+  const updated = await repo.setPostRemoved(
+    input.postId,
+    input.removed ? input.actorId : null,
+  );
+
+  await repo.addModLogEntry({
+    subredditId: input.subredditId,
+    moderatorId: input.actorId,
+    action: input.removed ? "remove_post" : "approve_post",
+    targetType: "post",
+    targetId: input.postId,
+    reason: input.reason ?? null,
+  });
+
+  return updated;
 }
