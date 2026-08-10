@@ -14,6 +14,7 @@ export async function GET() {
   return NextResponse.json({
     status: "ok",
     service: "hot-takes",
+    version: "pr-preview-test",
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
     storage: getDriver(),
