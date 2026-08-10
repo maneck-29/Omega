@@ -70,6 +70,11 @@ export type CreatePostInput = {
   url: string | null;
   imageUrl: string | null;
   /**
+   * Use a specific id instead of generating one. For fixtures that need stable
+   * ids across runs; normal creation lets the repository allocate.
+   */
+  id?: PostId;
+  /**
    * Backdate the row. For fixtures and backfills only — normal creation lets the
    * database default apply, so callers cannot forge a creation time.
    */
@@ -228,6 +233,20 @@ export type Repository = {
     targetIds: string[],
     viewerId: UserId | null,
   ): Promise<Map<string, Score>>;
+  /**
+   * Record many votes for one target and refresh its tallies once.
+   *
+   * `castVote` recomputes tallies on every call, so casting N votes costs N
+   * recomputes — fine for real traffic, but hundreds of round trips when seeding
+   * fixtures or backfilling. This does the same work in one pass.
+   *
+   * Existing votes by the same voter are overwritten, so it is idempotent.
+   */
+  recordVotes(
+    targetType: VoteTargetType,
+    targetId: string,
+    votes: Array<{ voterId: UserId; value: 1 | -1 }>,
+  ): Promise<Score>;
   /** Targets this user upvoted, newest first. Feeds the personalised ranking. */
   listVotedTargetIds(
     voterId: UserId,

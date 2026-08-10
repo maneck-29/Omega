@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PostSort, PostType, PostView, PostWindow } from "@/lib/types";
+import { POST_CREATED_EVENT } from "./events";
 import PostCard from "./post-card";
 
 const PAGE_SIZE = 20;
@@ -67,6 +68,8 @@ export default function PostList({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [interests, setInterests] = useState<string[] | null>(null);
+  /** Incremented to force a refetch of the first page. */
+  const [reloadToken, setReloadToken] = useState(0);
 
   const sentinelRef = useRef<HTMLDivElement>(null);
   // Stops the observer firing repeatedly for the same page.
@@ -134,7 +137,7 @@ export default function PostList({
     return () => {
       cancelled = true;
     };
-  }, [buildUrl]);
+  }, [buildUrl, reloadToken]);
 
   const loadMore = useCallback(async () => {
     if (loadingRef.current || !hasMore) return;
@@ -180,6 +183,21 @@ export default function PostList({
     observer.observe(sentinel);
     return () => observer.disconnect();
   }, [loadMore]);
+
+  /*
+   * The composer is mounted by the bottom navigation, outside this subtree, so it
+   * announces a new post with a window event rather than a prop callback.
+   * Bumping `reloadToken` re-runs the fetch effect, which puts the new post in
+   * correct rank order without reloading the page.
+   */
+  useEffect(() => {
+    function onPostCreated() {
+      setReloadToken((value) => value + 1);
+    }
+
+    window.addEventListener(POST_CREATED_EVENT, onPostCreated);
+    return () => window.removeEventListener(POST_CREATED_EVENT, onPostCreated);
+  }, []);
 
   function handleDeleted(id: string) {
     setPosts((current) => current.filter((view) => view.post.id !== id));
