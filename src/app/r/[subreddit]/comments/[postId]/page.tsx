@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import CommentThread from "@/components/comment-thread";
+import PostDetail from "@/components/post-detail";
 import { getCurrentUser } from "@/lib/auth";
 import { getCommentTree } from "@/lib/comments";
 import { DomainError } from "@/lib/errors";
+import { getPostView } from "@/lib/posts";
 import { ensureSeeded } from "@/lib/seed";
 import { getSubredditView } from "@/lib/subreddits";
 import type { CommentSort } from "@/lib/types";
@@ -19,8 +21,8 @@ function parseSort(value: string | undefined): CommentSort {
 /**
  * Post page.
  *
- * Shell and comment thread are TM3's. The post body itself is TM2's component —
- * dropped into the slot marked below once their posts table exists.
+ * Shell and comment thread are TM3's; the post body is rendered with TM2's
+ * `PostCard`, so it matches the feed exactly rather than being restyled here.
  */
 export default async function PostPage({
   params,
@@ -45,6 +47,18 @@ export default async function PostPage({
     throw error;
   }
 
+  /*
+   * getPostView throws 404 for a deleted or removed post. That is right for an
+   * API, but here the comments are still real, so a missing post degrades to a
+   * tombstone instead of taking the whole page down.
+   */
+  let postView = null;
+  try {
+    postView = await getPostView(postId, user?.id ?? null);
+  } catch (error) {
+    if (!(error instanceof DomainError && error.status === 404)) throw error;
+  }
+
   const sort = parseSort(query.sort);
   const { nodes, total } = await getCommentTree(postId, {
     viewerId: user?.id ?? null,
@@ -60,14 +74,26 @@ export default async function PostPage({
         </Link>
       </nav>
 
-      {/* TM2 slot: post title, body, vote controls. */}
-      <article className="rounded-lg border border-dashed border-black/[.15] px-4 py-6 dark:border-white/[.18]">
-        <p className="text-sm font-medium">Post body goes here</p>
-        <p className="mt-1 text-xs text-zinc-500">
-          Owned by TM2 (Posts &amp; Voting) — post id{" "}
-          <code className="font-mono">{postId}</code>
-        </p>
-      </article>
+      {/*
+        The post itself, rendered with TM2's card so the thread page and the feed
+        show identical titles, bodies and vote controls.
+
+        A deleted or removed post renders a tombstone rather than 404ing: the
+        comments beneath it are still real and must stay reachable, which is the
+        same rule that governs tombstoned comments.
+      */}
+      {postView ? (
+        <PostDetail view={postView} subredditSlug={view.slug} />
+      ) : (
+        <article className="rounded-lg border border-black/[.08] px-4 py-6 dark:border-white/[.12]">
+          <p className="text-sm italic text-zinc-500">
+            This post is no longer available.
+          </p>
+          <p className="mt-1 text-xs text-zinc-500">
+            Its comments are kept below.
+          </p>
+        </article>
+      )}
 
       {query.rootId && (
         <Link
