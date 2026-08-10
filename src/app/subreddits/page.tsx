@@ -86,7 +86,7 @@ export default async function SubredditsPage({
               <Link href={`/r/${subreddit.slug}`} className="group flex flex-col gap-1">
                 <div className="flex items-center justify-between gap-4">
                   <span className="font-medium group-hover:underline">
-                    r/{subreddit.name}
+                    {subreddit.name}
                   </span>
                   <span className="shrink-0 text-xs text-zinc-500">
                     {subreddit.subscriberCount}{" "}

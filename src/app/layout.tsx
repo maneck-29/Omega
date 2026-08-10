@@ -1,5 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { Suspense } from "react";
+import AppHeader from "@/components/app-header";
 import BottomNav from "@/components/bottom-nav";
 import "./globals.css";
 
@@ -38,6 +40,13 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         composer is one tap away from every page rather than only the feed.
       */}
       <body className="flex min-h-full flex-col pb-20">
+        {/*
+          The header reads the feed from the URL via useSearchParams, which needs
+          a Suspense boundary when rendered from a layout.
+        */}
+        <Suspense fallback={<div className="h-14" />}>
+          <AppHeader />
+        </Suspense>
         {children}
         <BottomNav />
       </body>
