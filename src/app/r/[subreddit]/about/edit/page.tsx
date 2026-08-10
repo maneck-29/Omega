@@ -4,6 +4,7 @@ import RulesEditor from "@/components/rules-editor";
 import SettingsForm from "@/components/settings-form";
 import { getCurrentUser } from "@/lib/auth";
 import { DomainError } from "@/lib/errors";
+import { renderableUrl } from "@/lib/media-url";
 import {
   MAX_INLINE_BYTES,
   MAX_UPLOAD_BYTES,
@@ -47,13 +48,13 @@ export default async function EditSubredditPage({
         <ImageUploader
           slug={view.slug}
           kind="banner"
-          currentUrl={view.bannerUrl}
+          currentUrl={renderableUrl(view.bannerUrl)}
           maxBytes={limit}
         />
         <ImageUploader
           slug={view.slug}
           kind="icon"
-          currentUrl={view.iconUrl}
+          currentUrl={renderableUrl(view.iconUrl)}
           maxBytes={limit}
         />
         {!usingS3 && (

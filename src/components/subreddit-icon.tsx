@@ -12,6 +12,8 @@
  * acceptable trade for keeping feeds out of the client bundle.
  */
 
+import { renderableUrl } from "@/lib/media-url";
+
 const GRADIENTS = [
   "from-rose-400 to-orange-400",
   "from-sky-400 to-indigo-500",
@@ -50,13 +52,23 @@ export default function SubredditIcon({
 }) {
   const dimensions = SIZES[size];
 
-  if (iconUrl) {
+  /*
+   * Normalised on render, not trusted as stored. A row written before images
+   * were served through this app holds an absolute S3 URL, which a browser
+   * cannot load because Omega blocks public access on the bucket. Fixing it here
+   * means an old row renders correctly without waiting on a migration to have
+   * run, on this request having triggered seeding, or on a cached page being
+   * regenerated.
+   */
+  const src = renderableUrl(iconUrl);
+
+  if (src) {
     return (
       // Plain <img>: Omega does not support Next.js image optimisation, so
       // next/image would add a /_next/image round trip that 404s there.
       // eslint-disable-next-line @next/next/no-img-element
       <img
-        src={iconUrl}
+        src={src}
         alt={`${name} icon`}
         loading="lazy"
         className={`${dimensions} shrink-0 rounded-full bg-black/5 object-cover dark:bg-white/10 ${className}`}

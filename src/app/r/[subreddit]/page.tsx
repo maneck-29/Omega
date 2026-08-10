@@ -5,6 +5,7 @@ import SubredditIcon from "@/components/subreddit-icon";
 import SubscribeButton from "@/components/subscribe-button";
 import { getCurrentUser } from "@/lib/auth";
 import { DomainError } from "@/lib/errors";
+import { renderableUrl } from "@/lib/media-url";
 import { ensureSeeded } from "@/lib/seed";
 import { getSubredditView } from "@/lib/subreddits";
 import { FIXTURE_POSTS } from "@/lib/seed";
@@ -44,6 +45,10 @@ export default async function SubredditPage({
         ? FIXTURE_POSTS.webdev
         : null;
 
+  // Normalised on render: a row written before images were served through the
+  // app holds an absolute S3 URL, which the browser cannot load.
+  const bannerSrc = renderableUrl(view.bannerUrl);
+
   return (
     <div className="flex flex-1 flex-col">
       {/*
@@ -51,10 +56,10 @@ export default async function SubredditPage({
         shape for communities that never set one. A plain <img> because Omega
         does not support Next.js image optimisation.
       */}
-      {view.bannerUrl ? (
+      {bannerSrc ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={view.bannerUrl}
+          src={bannerSrc}
           alt={`${view.name} banner`}
           className="h-24 w-full bg-black/5 object-cover dark:bg-white/10 sm:h-32"
         />
