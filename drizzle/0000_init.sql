@@ -1,5 +1,12 @@
 -- Initial schema for Amazon Aurora DSQL.
 --
+-- NOTE: `src/app/api/migrate/route.ts` applies the same schema over HTTP, for
+-- deployed environments where psql is unavailable. The two must stay in step.
+-- They currently differ only in index direction (this file declares DESC on the
+-- time and counter indexes); Postgres can scan an index in either direction, so
+-- both produce equivalent plans. Consolidating on one source would be better
+-- than keeping them synchronised by hand.
+--
 -- Hand-written rather than generated, because DSQL requires DDL that standard
 -- Drizzle output does not produce:
 --
@@ -131,3 +138,24 @@ CREATE INDEX ASYNC IF NOT EXISTS comments_author_idx
 
 CREATE INDEX ASYNC IF NOT EXISTS mod_log_subreddit_idx
     ON mod_log (subreddit_id, created_at DESC);
+
+-- Grants.
+--
+-- DSQL manages permissions through explicit grants, and the deployed app
+-- connects as a non-admin role (the Omega integration provisions something like
+-- `omega_user_<name>`; see src/app/api/migrate/route.ts). Tables created by
+-- `admin` are not readable by that role without this, so skipping these grants
+-- produces permission errors at runtime rather than at migration time.
+--
+-- Substitute the application role before running, e.g.:
+--   psql ... --set=app_user=omega_user_items_db --file drizzle/0000_init.sql
+-- and replace :app_user below. When running everything as admin, these are
+-- harmless no-ops.
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE subreddits TO :"app_user";
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE subreddit_rules TO :"app_user";
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE subreddit_subscriptions TO :"app_user";
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE subreddit_moderators TO :"app_user";
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE subreddit_bans TO :"app_user";
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE comments TO :"app_user";
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE mod_log TO :"app_user";

@@ -65,6 +65,12 @@ curl -H "Cookie: dev_user=user-2" http://localhost:3000/api/me/subscriptions
 
 `user-1` alice, `user-2` bob, `user-3` carol. Defaults to alice.
 
+## Integrations
+
+Optional Omega integrations — S3 for subreddit images, Bedrock for moderation
+triage. Each degrades gracefully when absent, so local development needs no AWS
+access. See [docs/integrations.md](docs/integrations.md).
+
 ## Routes
 
 Pages
@@ -76,6 +82,9 @@ Pages
 | `/subreddits/create` | Create a community |
 | `/r/[subreddit]` | Subreddit page — rules, join, post list slot |
 | `/r/[subreddit]/comments/[postId]` | Post page with threaded comments |
+| `/r/[subreddit]/about/edit` | Moderator: settings and rules |
+| `/r/[subreddit]/about/banned` | Moderator: ban management |
+| `/r/[subreddit]/about/log` | Moderator: audit trail |
 
 API — see [docs/integration-contract.md](docs/integration-contract.md) for the
 full table.
@@ -98,13 +107,19 @@ src/
     scores.ts              STUB — owned by TM2
     subreddits.ts          subreddit + subscription + ban service
     comments.ts            threading, sorting, moderation
+    media.ts               S3 image uploads (optional integration)
+    moderation-ai.ts       Bedrock comment triage (optional integration)
     seed.ts                shared development fixtures
 drizzle/
-  0000_init.sql            migration — authoritative DDL
+  0000_init.sql            schema for local psql use
 docs/
   integration-contract.md  work division and integration seams
   database.md              Aurora DSQL setup and constraints
+  integrations.md          S3 and Bedrock setup
 ```
+
+`src/app/api/migrate/route.ts` applies the same schema over HTTP for deployed
+environments; keep it in step with `drizzle/0000_init.sql`.
 
 ## Bundler note
 

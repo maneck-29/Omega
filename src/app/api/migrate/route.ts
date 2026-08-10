@@ -1,13 +1,16 @@
 import { auroraDSQLPostgres } from "@aws/aurora-dsql-postgresjs-connector";
 
 export async function POST() {
-  try {
-    const sql = auroraDSQLPostgres({
-      host: process.env.PGHOST!,
-      database: process.env.PGDATABASE || "postgres",
-      username: process.env.DSQL_ADMIN_USER || "admin",
-    });
+  // Constructed outside the try so the finally block can always close it: on a
+  // failed migration the connection would otherwise leak, and DSQL holds it for
+  // up to an hour.
+  const sql = auroraDSQLPostgres({
+    host: process.env.PGHOST!,
+    database: process.env.PGDATABASE || "postgres",
+    username: process.env.DSQL_ADMIN_USER || "admin",
+  });
 
+  try {
     // Each DDL statement must run in its own transaction in DSQL
 
     await sql`CREATE TABLE IF NOT EXISTS items (
@@ -143,14 +146,19 @@ export async function POST() {
     await sql`CREATE INDEX ASYNC IF NOT EXISTS votes_target_idx ON votes (target_type, target_id)`;
     await sql`CREATE INDEX ASYNC IF NOT EXISTS votes_voter_idx ON votes (voter_id)`;
 
-    await sql.end();
-
-    return Response.json({ success: true, message: "All tables and indexes created" });
+    return Response.json({
+      success: true,
+      message: "All tables and indexes created",
+      appUser,
+      note: "Index builds are asynchronous; check SELECT * FROM sys.jobs.",
+    });
   } catch (error) {
     console.error("Migration error:", error);
     return Response.json(
       { error: error instanceof Error ? error.message : "Migration failed" },
       { status: 500 }
     );
+  } finally {
+    await sql.end();
   }
 }
