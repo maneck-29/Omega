@@ -59,6 +59,75 @@ export type ScoreProvider = {
 };
 
 // ---------------------------------------------------------------------------
+// Posts — owned by TM2.
+//
+// A post belongs to exactly one subreddit. `removedAt`/`removedBy` are written
+// by TM3's moderation and MUST be filtered out of every TM2 listing, sort,
+// search and pagination query.
+//
+// Tallies are denormalized onto the row so ranking can be expressed as an
+// ORDER BY. They are recomputed from the votes table rather than incremented,
+// which keeps the update idempotent under DSQL's optimistic-concurrency retries.
+// ---------------------------------------------------------------------------
+
+export type PostId = string;
+
+export type PostType = "text" | "link" | "image";
+
+export type PostSort = "hot" | "new" | "top" | "controversial";
+
+/** Time window for `top`; ignored by the other sorts. */
+export type PostWindow = "day" | "week" | "all";
+
+export type Post = {
+  id: PostId;
+  subredditId: SubredditId;
+  /** References users.id (TM1). No FK: unsupported in DSQL. */
+  authorId: UserId;
+  /** The hot take itself. Required. */
+  title: string;
+  /** Optional elaboration; empty string when absent. */
+  body: string;
+  postType: PostType;
+  /** Set for `link` posts. */
+  url: string | null;
+  /** Set for `image` posts. */
+  imageUrl: string | null;
+  createdAt: string;
+  editedAt: string | null;
+  /** Author deletion. Soft delete, so comments beneath stay reachable. */
+  deletedAt: string | null;
+  /** Moderator removal, tracked separately from author deletion. */
+  removedAt: string | null;
+  removedBy: UserId | null;
+  upvotes: number;
+  downvotes: number;
+  /** upvotes - downvotes, denormalized for ranking. */
+  score: number;
+};
+
+/** A post plus everything the UI needs to render it, resolved in one pass. */
+export type PostView = {
+  post: Post;
+  author: PublicUser | null;
+  score: Score;
+  commentCount: number;
+  subreddit: { id: SubredditId; name: string; slug: string } | null;
+  /** Whether the requesting user may edit or delete it. */
+  isOwner: boolean;
+};
+
+export type Vote = {
+  targetType: VoteTargetType;
+  targetId: string;
+  voterId: UserId;
+  /** 1 or -1; a cleared vote is an absent row, never a 0. */
+  value: 1 | -1;
+  createdAt: string;
+  updatedAt: string | null;
+};
+
+// ---------------------------------------------------------------------------
 // Subreddits — owned by TM3.
 // ---------------------------------------------------------------------------
 

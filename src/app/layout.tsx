@@ -1,5 +1,6 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import BottomNav from "@/components/bottom-nav";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -14,7 +15,16 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Hot Takes",
-  description: "Building a service with Hot Takes",
+  description: "An anonymous opinion board. Post it, vote it, argue about it.",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#000000" },
+  ],
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -23,7 +33,14 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      {/*
+        Bottom padding clears the fixed navigation, which is rendered here so the
+        composer is one tap away from every page rather than only the feed.
+      */}
+      <body className="flex min-h-full flex-col pb-20">
+        {children}
+        <BottomNav />
+      </body>
     </html>
   );
 }

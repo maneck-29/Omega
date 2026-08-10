@@ -15,12 +15,19 @@ import type {
   CommentId,
   ModLogEntry,
   ModeratorRole,
+  Post,
+  PostId,
+  PostSort,
+  PostType,
+  PostWindow,
+  Score,
   Subreddit,
   SubredditBan,
   SubredditId,
   SubredditModerator,
   SubredditRule,
   UserId,
+  VoteTargetType,
 } from "./types";
 
 export type CreateSubredditInput = {
@@ -48,6 +55,47 @@ export type CreateCommentInput = {
 export type SubredditListOptions = {
   query?: string;
   sort?: "popular" | "new" | "name";
+  limit?: number;
+  offset?: number;
+};
+
+// --- Posts and votes (TM2) -------------------------------------------------
+
+export type CreatePostInput = {
+  subredditId: SubredditId;
+  authorId: UserId;
+  title: string;
+  body: string;
+  postType: PostType;
+  url: string | null;
+  imageUrl: string | null;
+  /**
+   * Backdate the row. For fixtures and backfills only — normal creation lets the
+   * database default apply, so callers cannot forge a creation time.
+   */
+  createdAt?: string;
+};
+
+export type UpdatePostInput = {
+  title?: string;
+  body?: string;
+  url?: string | null;
+  imageUrl?: string | null;
+};
+
+export type PostListOptions = {
+  /** Single subreddit, for `/r/[slug]`. */
+  subredditId?: SubredditId | null;
+  /** Restrict to a set of subreddits, for the subscribed home feed. */
+  subredditIds?: SubredditId[] | null;
+  /** Post history for a profile page. */
+  authorId?: UserId | null;
+  /** Substring match against title, body and URL. */
+  query?: string | null;
+  postType?: PostType | null;
+  sort?: PostSort;
+  /** Only applies to `top`. */
+  window?: PostWindow;
   limit?: number;
   offset?: number;
 };
@@ -140,4 +188,51 @@ export type Repository = {
   // --- Mod log ------------------------------------------------------------
   addModLogEntry(entry: Omit<ModLogEntry, "id" | "createdAt">): Promise<ModLogEntry>;
   listModLog(subredditId: SubredditId, limit?: number): Promise<ModLogEntry[]>;
+
+  // --- Posts (TM2) --------------------------------------------------------
+  createPost(input: CreatePostInput): Promise<Post>;
+  getPostById(id: PostId): Promise<Post | null>;
+  /**
+   * Ranked, filtered, paginated listing. Implementations MUST exclude rows with
+   * `deleted_at` or `removed_at` set — moderator-removed posts must not appear
+   * in any listing, sort or search.
+   */
+  listPosts(options?: PostListOptions): Promise<Post[]>;
+  countPosts(options?: PostListOptions): Promise<number>;
+  updatePost(id: PostId, patch: UpdatePostInput): Promise<Post>;
+  /** Author deletion: tombstone, never a hard delete. */
+  softDeletePost(id: PostId): Promise<Post>;
+  /** Moderator removal, tracked separately from author deletion. */
+  setPostRemoved(id: PostId, removedBy: UserId | null): Promise<Post>;
+
+  // --- Votes (TM2) --------------------------------------------------------
+  /**
+   * Cast, flip or clear a vote, then refresh the target's tallies, atomically.
+   *
+   * Re-casting the same direction clears the vote; the opposite direction flips
+   * it. Returns the resulting score so callers need no follow-up read.
+   *
+   * Tallies are recomputed from the votes table rather than incremented, which
+   * keeps the transaction body idempotent — a requirement under DSQL's
+   * optimistic-concurrency retries.
+   */
+  castVote(
+    targetType: VoteTargetType,
+    targetId: string,
+    voterId: UserId,
+    value: 1 | -1,
+  ): Promise<Score>;
+  /** Batched score lookup. Backs the `ScoreProvider` contract. */
+  getScores(
+    targetType: VoteTargetType,
+    targetIds: string[],
+    viewerId: UserId | null,
+  ): Promise<Map<string, Score>>;
+  /** Targets this user upvoted, newest first. Feeds the personalised ranking. */
+  listVotedTargetIds(
+    voterId: UserId,
+    targetType: VoteTargetType,
+    value: 1 | -1,
+    limit?: number,
+  ): Promise<string[]>;
 };

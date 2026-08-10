@@ -174,3 +174,83 @@ export const modLog = pgTable(
   },
   (table) => [index("mod_log_subreddit_idx").on(table.subredditId)],
 );
+
+// ---------------------------------------------------------------------------
+// Posts and votes — owned by TM2.
+// ---------------------------------------------------------------------------
+
+export const posts = pgTable(
+  "posts",
+  {
+    id: uuid("id").primaryKey(),
+    /** References subreddits.id. No FK: unsupported in DSQL. */
+    subredditId: uuid("subreddit_id").notNull(),
+    /** References users.id (TM1). */
+    authorId: text("author_id").notNull(),
+    /** The hot take itself. */
+    title: text("title").notNull(),
+    /** Optional elaboration. */
+    body: text("body").notNull().default(""),
+    /** text | link | image */
+    postType: text("post_type").notNull().default("text"),
+    url: text("url"),
+    imageUrl: text("image_url"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    editedAt: timestamp("edited_at", { withTimezone: true }),
+    /** Author deletion. Soft only — comments beneath must stay reachable. */
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    /** Moderator removal, written by TM3, filtered by every TM2 query. */
+    removedAt: timestamp("removed_at", { withTimezone: true }),
+    removedBy: text("removed_by"),
+    /**
+     * Denormalized tallies, recomputed from `votes` inside the vote transaction.
+     * Recomputed rather than incremented so the write is idempotent under DSQL's
+     * optimistic-concurrency retries, and so it cannot drift.
+     */
+    upvotes: integer("upvotes").notNull().default(0),
+    downvotes: integer("downvotes").notNull().default(0),
+    score: integer("score").notNull().default(0),
+  },
+  (table) => [
+    // Subreddit listings and the `new` sort.
+    index("posts_subreddit_created_idx").on(table.subredditId, table.createdAt),
+    // The `top` sort.
+    index("posts_score_idx").on(table.score),
+    index("posts_created_at_idx").on(table.createdAt),
+    // Post history on TM1's profile pages.
+    index("posts_author_idx").on(table.authorId),
+  ],
+);
+
+export const votes = pgTable(
+  "votes",
+  {
+    /** post | comment — generic so one table serves both. */
+    targetType: text("target_type").notNull(),
+    targetId: uuid("target_id").notNull(),
+    /** References users.id (TM1). */
+    voterId: text("voter_id").notNull(),
+    /** 1 or -1. Clearing a vote deletes the row rather than storing 0. */
+    value: integer("value").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }),
+  },
+  (table) => [
+    /*
+     * Composite primary key makes a double vote impossible at the storage
+     * layer, the same trick subreddit_subscriptions uses for double subscribes.
+     * It also means casting a vote needs no read-modify-write.
+     */
+    primaryKey({
+      columns: [table.targetType, table.targetId, table.voterId],
+    }),
+    // Tally recomputation reads every vote for one target.
+    index("votes_target_idx").on(table.targetType, table.targetId),
+    // "Posts you voted on" and the personalised feed.
+    index("votes_voter_idx").on(table.voterId),
+  ],
+);
