@@ -1,5 +1,12 @@
 -- Initial schema for Amazon Aurora DSQL.
 --
+-- NOTE: `src/app/api/migrate/route.ts` applies the same schema over HTTP, for
+-- deployed environments where psql is unavailable. The two must stay in step.
+-- They currently differ only in index direction (this file declares DESC on the
+-- time and counter indexes); Postgres can scan an index in either direction, so
+-- both produce equivalent plans. Consolidating on one source would be better
+-- than keeping them synchronised by hand.
+--
 -- Hand-written rather than generated, because DSQL requires DDL that standard
 -- Drizzle output does not produce:
 --
