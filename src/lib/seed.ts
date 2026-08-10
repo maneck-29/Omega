@@ -11,6 +11,7 @@
 import { DEV_USERS } from "./auth";
 import { getRepository } from "./db";
 import { createComment } from "./comments";
+import { isMediaConfigured, migratedUrl } from "./media";
 import { createSubreddit } from "./subreddits";
 
 /**
@@ -28,6 +29,47 @@ export const FIXTURE_POSTS = {
   webdev: "22222222-2222-4222-8222-222222222222",
 } as const;
 
+/**
+ * Fixture community icons, as inline SVG data URLs.
+ *
+ * Inlined rather than served from `public/` or S3 for two reasons. The sign-in
+ * gate covers everything except `_next/static` and a short allowlist, so a file
+ * under `public/` redirects to `/login` for a signed-out reader and would need
+ * the same allowlist exemption `/api/media` already needed. And S3 is not
+ * provisioned, so a bucket URL would 404.
+ *
+ * A data URL renders with no request at all, which sidesteps both. These are
+ * deliberately tiny — a circle and a glyph, a few hundred bytes each — because
+ * the value lives in a column that is read on every page render. Real uploads go
+ * through `POST /api/subreddits/[slug]/images`; this is only so the fixture
+ * communities are visually distinct out of the box.
+ *
+ * `SubredditIcon` still falls back to a slug-derived gradient when a community
+ * has no icon, so nothing here is load-bearing.
+ */
+function svgIcon(background: string, glyph: string): string {
+  // No newlines: a data URL cannot contain raw line breaks. `#` is percent-
+  // encoded because it would otherwise start a fragment and truncate the colour.
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">` +
+    `<circle cx="32" cy="32" r="32" fill="${background}"/>` +
+    `<text x="32" y="33" font-family="ui-sans-serif,system-ui,sans-serif" ` +
+    `font-size="30" font-weight="700" fill="#ffffff" text-anchor="middle" ` +
+    `dominant-baseline="central">${glyph}</text>` +
+    `</svg>`;
+
+  return `data:image/svg+xml,${svg.replace(/#/g, "%23").replace(/"/g, "'")}`;
+}
+
+const FIXTURE_ICONS = {
+  // TypeScript blue, with the language's own initials.
+  typescript: svgIcon("#3178c6", "TS"),
+  // Web orange, angle bracket for markup.
+  webdev: svgIcon("#e34f26", "&lt;/&gt;"),
+  // Hot pink, flame for "hot" takes.
+  hottakes: svgIcon("#db2777", "🔥"),
+} as const;
+
 let seeding: Promise<void> | null = null;
 
 async function seed(): Promise<void> {
@@ -43,6 +85,43 @@ async function seed(): Promise<void> {
   // Always attempted; guards on its own emptiness and resolves subreddits by
   // slug, so it works whether or not the block above just ran.
   await seedPosts();
+
+  await repairImageUrls();
+}
+
+/**
+ * Rewrites stored image URLs that point at the S3 regional endpoint.
+ *
+ * Images uploaded before they were served through the app hold an absolute S3
+ * URL, and Omega blocks public access on its buckets, so those render as 403 in a
+ * browser even though the object is intact and the app can read it. Only the URL
+ * is wrong, so this rewrites it to `/api/media/<key>`.
+ *
+ * Runs on every seed rather than only on an empty board, because the rows needing
+ * it are precisely the ones that already exist. It is a no-op once migrated, and
+ * a no-op entirely when S3 is not configured.
+ */
+async function repairImageUrls(): Promise<void> {
+  if (!isMediaConfigured()) return;
+
+  const repo = getRepository();
+  const subreddits = await repo.listSubreddits({ limit: 1000 });
+
+  for (const subreddit of subreddits) {
+    const bannerUrl = migratedUrl(subreddit.bannerUrl);
+    const iconUrl = migratedUrl(subreddit.iconUrl);
+
+    if (!bannerUrl && !iconUrl) continue;
+
+    await repo.updateSubreddit(subreddit.id, {
+      ...(bannerUrl ? { bannerUrl } : {}),
+      ...(iconUrl ? { iconUrl } : {}),
+    });
+
+    console.info(
+      `Rewrote S3 endpoint URL(s) for r/${subreddit.slug} to /api/media`,
+    );
+  }
 }
 
 async function seedSubredditsAndComments(): Promise<void> {
@@ -62,11 +141,26 @@ async function seedSubredditsAndComments(): Promise<void> {
     createdBy: bob.id,
   });
 
-  await createSubreddit({
+  const hottakes = await createSubreddit({
     name: "HotTakes",
     description: "Opinions that should be controversial but are not.",
     createdBy: carol.id,
   });
+
+  /*
+   * Icons are written straight to the repository rather than passed to
+   * `createSubreddit`, which runs them through `validateOptionalUrl`. That
+   * rejects any scheme other than http(s) — the guard that stops a
+   * `javascript:` URL reaching an `<img src>` — and a `data:` URL is caught by
+   * the same rule. Relaxing it to admit these fixtures would weaken a real
+   * check for cosmetic seed data, so the write goes through the same path
+   * uploads use for server-built values.
+   */
+  await repo.updateSubreddit(typescript.id, {
+    iconUrl: FIXTURE_ICONS.typescript,
+  });
+  await repo.updateSubreddit(webdev.id, { iconUrl: FIXTURE_ICONS.webdev });
+  await repo.updateSubreddit(hottakes.id, { iconUrl: FIXTURE_ICONS.hottakes });
 
   await repo.addRule(typescript.id, "Stay on topic", "Posts must relate to TypeScript.");
   await repo.addRule(typescript.id, "Be civil", "No personal attacks.");

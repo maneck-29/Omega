@@ -276,3 +276,21 @@ export function keyFromUrl(url: string | null): string | null {
     return null;
   }
 }
+
+/**
+ * Rewrites a stored absolute S3 URL to the `/api/media/` path.
+ *
+ * Rows written before images were served through the app hold the S3 regional
+ * endpoint, and Omega blocks public access on its buckets, so a browser loading
+ * one gets 403 — the object exists and the app can read it, but the URL in the
+ * row is unreachable. The key is unchanged, so this is a pure URL rewrite with no
+ * copying or re-upload.
+ *
+ * Returns null when the value needs no change, so callers can skip the write.
+ */
+export function migratedUrl(url: string | null): string | null {
+  if (!url || url.startsWith(MEDIA_ROUTE)) return null;
+
+  const key = keyFromUrl(url);
+  return key ? publicUrl(key) : null;
+}
