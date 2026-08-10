@@ -18,12 +18,25 @@ import { readSessionValue, SESSION_COOKIE } from "@/lib/session";
  * than node:crypto.
  */
 
-/** Reachable without a session, or signing in would be impossible. */
+/**
+ * Reachable without a session, or signing in would be impossible.
+ *
+ * `/api/media` is here because it serves images referenced by `<img src>`, and
+ * the CDN in front of the app caches those paths with cookies stripped — the
+ * session never reaches this proxy, so gating them produced a 401 for every
+ * banner and icon even when the reader was signed in.
+ *
+ * Making them public is the right call rather than a workaround. Object keys
+ * carry a random UUID, so a URL cannot be guessed, and the route confines reads
+ * to the `subreddits/` prefix. What leaks is a community's banner to someone who
+ * already has its exact URL, which is the same exposure any CDN-hosted image has.
+ */
 const PUBLIC_PATHS = [
   "/login",
   "/api/auth/login",
   "/api/auth/logout",
   "/api/health",
+  "/api/media",
 ];
 
 export async function proxy(request: NextRequest) {
