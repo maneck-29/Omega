@@ -85,6 +85,35 @@ export async function POST() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )`;
 
+    await sql`CREATE TABLE IF NOT EXISTS posts (
+      id UUID PRIMARY KEY,
+      subreddit_id UUID NOT NULL,
+      author_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL DEFAULT '',
+      post_type TEXT NOT NULL DEFAULT 'text',
+      url TEXT,
+      image_url TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      edited_at TIMESTAMPTZ,
+      deleted_at TIMESTAMPTZ,
+      removed_at TIMESTAMPTZ,
+      removed_by TEXT,
+      upvotes INTEGER NOT NULL DEFAULT 0,
+      downvotes INTEGER NOT NULL DEFAULT 0,
+      score INTEGER NOT NULL DEFAULT 0
+    )`;
+
+    await sql`CREATE TABLE IF NOT EXISTS votes (
+      target_type TEXT NOT NULL,
+      target_id UUID NOT NULL,
+      voter_id TEXT NOT NULL,
+      value INTEGER NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ,
+      PRIMARY KEY (target_type, target_id, voter_id)
+    )`;
+
     // Grant permissions to the app user
     const appUser = process.env.PGUSER || "omega_user_items_db";
     await sql`GRANT ALL ON TABLE items TO ${sql.unsafe(appUser)}`;
@@ -95,6 +124,8 @@ export async function POST() {
     await sql`GRANT ALL ON TABLE subreddit_bans TO ${sql.unsafe(appUser)}`;
     await sql`GRANT ALL ON TABLE comments TO ${sql.unsafe(appUser)}`;
     await sql`GRANT ALL ON TABLE mod_log TO ${sql.unsafe(appUser)}`;
+    await sql`GRANT ALL ON TABLE posts TO ${sql.unsafe(appUser)}`;
+    await sql`GRANT ALL ON TABLE votes TO ${sql.unsafe(appUser)}`;
 
     // Async indexes (these run in background)
     await sql`CREATE UNIQUE INDEX ASYNC IF NOT EXISTS subreddits_slug_key ON subreddits (slug)`;
@@ -107,6 +138,10 @@ export async function POST() {
     await sql`CREATE INDEX ASYNC IF NOT EXISTS comments_parent_idx ON comments (parent_comment_id)`;
     await sql`CREATE INDEX ASYNC IF NOT EXISTS comments_author_idx ON comments (author_id, created_at)`;
     await sql`CREATE INDEX ASYNC IF NOT EXISTS mod_log_subreddit_idx ON mod_log (subreddit_id, created_at)`;
+    await sql`CREATE INDEX ASYNC IF NOT EXISTS posts_subreddit_created_idx ON posts (subreddit_id, created_at)`;
+    await sql`CREATE INDEX ASYNC IF NOT EXISTS posts_score_idx ON posts (score)`;
+    await sql`CREATE INDEX ASYNC IF NOT EXISTS votes_target_idx ON votes (target_type, target_id)`;
+    await sql`CREATE INDEX ASYNC IF NOT EXISTS votes_voter_idx ON votes (voter_id)`;
 
     await sql.end();
 
