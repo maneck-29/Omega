@@ -14,6 +14,11 @@
  */
 
 import { cookies } from "next/headers";
+import {
+  readSessionValue,
+  SESSION_COOKIE,
+  sessionUsername,
+} from "./session";
 import type { PublicUser, UserId } from "./types";
 
 /** Fixture users, shared with the seed script so all three of us test alike. */
@@ -25,10 +30,37 @@ export const DEV_USERS: PublicUser[] = [
 
 const DEFAULT_USER_ID = "user-1";
 
+/**
+ * The signed-in user.
+ *
+ * A valid session cookie wins. Without one this falls back to the `dev_user`
+ * stub, so every flow teammates built against the fixture users keeps working
+ * and nothing depends on signing in.
+ */
 export async function getCurrentUser(): Promise<PublicUser | null> {
   const store = await cookies();
+
+  const sessionUserId = await readSessionValue(store.get(SESSION_COOKIE)?.value);
+  if (sessionUserId) {
+    const signedIn = DEV_USERS.find((u) => u.id === sessionUserId);
+    if (signedIn) {
+      // The session's account may be named differently from the fixture user it
+      // maps onto, so show the name they signed in with.
+      return { ...signedIn, username: sessionUsername() };
+    }
+  }
+
   const id = store.get("dev_user")?.value ?? DEFAULT_USER_ID;
   return DEV_USERS.find((u) => u.id === id) ?? null;
+}
+
+/**
+ * Whether the visitor has actually signed in, as opposed to being served the
+ * development stub. Used by the login page and the sign-out control.
+ */
+export async function isSignedIn(): Promise<boolean> {
+  const store = await cookies();
+  return (await readSessionValue(store.get(SESSION_COOKIE)?.value)) !== null;
 }
 
 /** Throwing variant for routes that require a session. */
