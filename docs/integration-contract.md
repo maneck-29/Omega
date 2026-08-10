@@ -203,6 +203,12 @@ Moderation
 | `POST` | `/api/subreddits/[slug]/moderation/comments` — remove/approve |
 | `POST` | `/api/subreddits/[slug]/moderation/posts` — remove/approve (TM2) |
 | `GET`/`POST`/`DELETE` | `/api/subreddits/[slug]/moderation/bans` |
+| `GET` | `/api/subreddits/[slug]/moderation/log` — audit trail |
+| `PATCH`/`DELETE` | `/api/subreddits/[slug]/rules/[ruleId]` |
+| `PUT` | `/api/subreddits/[slug]/rules/reorder` — complete id list |
+
+Moderator pages: `/r/[subreddit]/about/edit` (settings and rules),
+`/about/banned`, `/about/log`.
 
 ## Fixtures
 

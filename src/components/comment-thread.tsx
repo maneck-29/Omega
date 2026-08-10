@@ -1,7 +1,8 @@
 import Link from "next/link";
 import type { CommentNode, CommentSort } from "@/lib/types";
 import { VOTING_AVAILABLE } from "@/lib/scores";
-import ReplyForm from "./reply-form";
+import CommentActions from "./comment-actions";
+import TopLevelForm from "./top-level-form";
 import VoteControl from "./vote-control";
 
 /**
@@ -35,21 +36,26 @@ function CommentRow({
   postId,
   subredditSlug,
   viewerId,
+  canModerate,
 }: {
   node: CommentNode;
   postId: string;
   subredditSlug: string;
   viewerId: string | null;
+  canModerate: boolean;
 }) {
   const { comment, author, score, isTombstone } = node;
   const isAuthor = viewerId !== null && comment.authorId === viewerId;
+  const isRemoved = comment.removedAt !== null;
 
   return (
     <li className="border-l border-black/[.08] pl-3 dark:border-white/[.14]">
       <article className="py-2">
         <header className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
           {isTombstone ? (
-            <span className="italic">[deleted]</span>
+            <span className="italic">
+              {isRemoved ? "[removed]" : "[deleted]"}
+            </span>
           ) : (
             <span className="font-medium text-zinc-800 dark:text-zinc-200">
               {author?.username ?? "unknown"}
@@ -57,6 +63,11 @@ function CommentRow({
           )}
           <time dateTime={comment.createdAt}>{relativeTime(comment.createdAt)}</time>
           {comment.editedAt && <span className="italic">edited</span>}
+          {isRemoved && canModerate && (
+            <span className="rounded bg-amber-500/[.15] px-1.5 py-0.5 font-medium text-amber-700 dark:text-amber-400">
+              removed by mod
+            </span>
+          )}
         </header>
 
         <p
@@ -85,12 +96,18 @@ function CommentRow({
           </div>
         )}
 
-        {!isTombstone && (
-          <ReplyForm
+        {/*
+          A removed comment still shows moderator controls so it can be approved
+          back; an author-deleted one is final and shows nothing.
+        */}
+        {(!isTombstone || (isRemoved && canModerate)) && (
+          <CommentActions
             postId={postId}
             subredditSlug={subredditSlug}
-            parentCommentId={comment.id}
+            commentId={comment.id}
             canDelete={isAuthor}
+            canModerate={canModerate}
+            isRemoved={isRemoved}
           />
         )}
       </article>
@@ -104,6 +121,7 @@ function CommentRow({
               postId={postId}
               subredditSlug={subredditSlug}
               viewerId={viewerId}
+              canModerate={canModerate}
             />
           ))}
         </ul>
@@ -136,6 +154,8 @@ export default function CommentThread({
   subredditSlug,
   viewerId,
   sort,
+  canModerate = false,
+  canComment = true,
 }: {
   nodes: CommentNode[];
   total: number;
@@ -143,6 +163,8 @@ export default function CommentThread({
   subredditSlug: string;
   viewerId: string | null;
   sort: CommentSort;
+  canModerate?: boolean;
+  canComment?: boolean;
 }) {
   return (
     <section className="flex flex-col gap-3">
@@ -174,7 +196,9 @@ export default function CommentThread({
         </p>
       )}
 
-      <ReplyForm postId={postId} subredditSlug={subredditSlug} parentCommentId={null} />
+      {canComment && (
+        <TopLevelForm postId={postId} subredditSlug={subredditSlug} />
+      )}
 
       {nodes.length === 0 ? (
         <p className="py-4 text-sm text-zinc-500">
@@ -189,6 +213,7 @@ export default function CommentThread({
               postId={postId}
               subredditSlug={subredditSlug}
               viewerId={viewerId}
+              canModerate={canModerate}
             />
           ))}
         </ul>

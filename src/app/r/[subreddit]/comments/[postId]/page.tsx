@@ -91,6 +91,8 @@ export default async function PostPage({
         subredditSlug={view.slug}
         viewerId={user?.id ?? null}
         sort={sort}
+        canModerate={view.isModerator}
+        canComment={user !== null && !view.isBanned}
       />
     </div>
   );

@@ -116,9 +116,32 @@ export default async function SubredditPage({
               <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
                 Moderation
               </h2>
-              <p className="mt-2 text-xs text-zinc-500">
-                You moderate this community.
-              </p>
+              <ul className="mt-2 flex flex-col gap-1.5 text-sm">
+                <li>
+                  <Link
+                    href={`/r/${view.slug}/about/edit`}
+                    className="text-blue-600 hover:underline dark:text-blue-400"
+                  >
+                    Settings &amp; rules
+                  </Link>
+                </li>
+                <li>
+                  <Link
+                    href={`/r/${view.slug}/about/banned`}
+                    className="text-blue-600 hover:underline dark:text-blue-400"
+                  >
+                    Banned users
+                  </Link>
+                </li>
+                <li>
+                  <Link
+                    href={`/r/${view.slug}/about/log`}
+                    className="text-blue-600 hover:underline dark:text-blue-400"
+                  >
+                    Mod log
+                  </Link>
+                </li>
+              </ul>
             </section>
           )}
         </aside>
