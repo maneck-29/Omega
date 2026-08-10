@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1106.0",
     "@aws/aurora-dsql-node-postgres-connector": "^0.1.9",
     "@aws/aurora-dsql-postgresjs-connector": "^0.3.0",
     "drizzle-orm": "^0.45.2",

@@ -1,43 +1,35 @@
 /**
- * Stub `ScoreProvider` — owned by TM2 (Posts & Voting).
+ * `ScoreProvider` — owned by TM2 (Posts & Voting).
  *
- * Returns zeroed scores so comment threads render before voting exists.
- * Score-dependent sorts (best/top/controversial) degrade to chronological until
- * the real provider lands; see `sortComments` in `comments.ts`.
+ * Replaces the zero-filled stub TM3 shipped so comment threads could render
+ * before voting existed. Scores now come from the `votes` table via the
+ * repository, so `best`, `top` and `controversial` comment sorts work rather
+ * than degrading to chronological.
  *
- * TM2: replace the body of `getScoreProvider()` with the real implementation.
- * The contract requirement is that votes are keyed by (targetType, targetId) so
- * one table and one UI serve both posts and comments.
+ * Votes are keyed by (targetType, targetId), which is what lets one table and
+ * one control serve both posts and comments — see `docs/integration-contract.md`.
  */
 
-import type { Score, ScoreProvider, VoteTargetType } from "./types";
+import { getRepository } from "./db";
+import type { Score, ScoreProvider, UserId, VoteTargetType } from "./types";
 
-export const stubScoreProvider: ScoreProvider = {
-  // viewerId is part of the contract (TM2 needs it for `viewerVote`) but the
-  // stub has no votes to look up.
+export const votesScoreProvider: ScoreProvider = {
   async getScores(
     targetType: VoteTargetType,
     targetIds: string[],
+    viewerId: UserId | null,
   ): Promise<Map<string, Score>> {
-    return new Map(
-      targetIds.map((targetId) => [
-        targetId,
-        {
-          targetType,
-          targetId,
-          score: 0,
-          upvotes: 0,
-          downvotes: 0,
-          viewerVote: 0 as const,
-        },
-      ]),
-    );
+    if (targetIds.length === 0) return new Map();
+    return getRepository().getScores(targetType, targetIds, viewerId);
   },
 };
 
-/** True while the stub is active, so the UI can hide vote controls. */
-export const VOTING_AVAILABLE = false;
+/**
+ * Voting is live. TM3's comment thread reads this to decide whether to render
+ * vote controls and whether score-dependent sorts are meaningful.
+ */
+export const VOTING_AVAILABLE = true;
 
 export function getScoreProvider(): ScoreProvider {
-  return stubScoreProvider;
+  return votesScoreProvider;
 }

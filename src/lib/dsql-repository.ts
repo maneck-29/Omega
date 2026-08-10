@@ -12,29 +12,51 @@
  *   read-then-write, so a retry cannot double-count.
  */
 
-import { and, asc, count, desc, eq, ilike, isNull, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gte,
+  ilike,
+  inArray,
+  isNull,
+  or,
+  sql,
+} from "drizzle-orm";
 
 import { getDb, withTransaction } from "./dsql";
+import { windowCutoff } from "./ranking";
 import type {
   CreateCommentInput,
+  CreatePostInput,
   CreateSubredditInput,
+  PostListOptions,
   Repository,
   SubredditListOptions,
+  UpdatePostInput,
   UpdateSubredditInput,
 } from "./repository";
 import {
   comments as commentsTable,
   modLog as modLogTable,
+  posts as postsTable,
   subredditBans,
   subredditModerators,
   subredditRules,
   subredditSubscriptions,
   subreddits as subredditsTable,
+  votes as votesTable,
 } from "./schema";
 import type {
   Comment,
   ModLogEntry,
   ModeratorRole,
+  Post,
+  PostId,
+  PostSort,
+  Score,
   Subreddit,
   SubredditBan,
   SubredditId,
@@ -48,6 +70,28 @@ import type {
 type SubredditRow = typeof subredditsTable.$inferSelect;
 type CommentRow = typeof commentsTable.$inferSelect;
 type BanRow = typeof subredditBans.$inferSelect;
+type PostRow = typeof postsTable.$inferSelect;
+
+function toPost(row: PostRow): Post {
+  return {
+    id: row.id,
+    subredditId: row.subredditId,
+    authorId: row.authorId,
+    title: row.title,
+    body: row.body,
+    postType: row.postType as Post["postType"],
+    url: row.url,
+    imageUrl: row.imageUrl,
+    createdAt: row.createdAt.toISOString(),
+    editedAt: iso(row.editedAt),
+    deletedAt: iso(row.deletedAt),
+    removedAt: iso(row.removedAt),
+    removedBy: row.removedBy,
+    upvotes: row.upvotes,
+    downvotes: row.downvotes,
+    score: row.score,
+  };
+}
 
 const iso = (value: Date | null): string | null =>
   value === null ? null : value.toISOString();
@@ -66,8 +110,7 @@ function toSubreddit(row: SubredditRow): Subreddit {
   };
 }
 
-function toComment(row: CommentRow): Comment {
-  return {
+function toComment(row: CommentRow): Comment {  return {
     id: row.id,
     postId: row.postId,
     parentCommentId: row.parentCommentId,
@@ -696,4 +739,358 @@ export const dsqlRepository: Repository = {
       createdAt: row.createdAt.toISOString(),
     }));
   },
+
+  // --- Posts (TM2) --------------------------------------------------------
+
+  async createPost(input: CreatePostInput) {
+    const [row] = await getDb()
+      .insert(postsTable)
+      .values({
+        id: crypto.randomUUID(),
+        subredditId: input.subredditId,
+        authorId: input.authorId,
+        title: input.title,
+        body: input.body,
+        postType: input.postType,
+        url: input.url,
+        imageUrl: input.imageUrl,
+        // Omitted for normal creation so the column default applies.
+        ...(input.createdAt ? { createdAt: new Date(input.createdAt) } : {}),
+      })
+      .returning();
+
+    return toPost(row);
+  },
+
+  async getPostById(id) {
+    const [row] = await getDb()
+      .select()
+      .from(postsTable)
+      .where(eq(postsTable.id, id))
+      .limit(1);
+    return row ? toPost(row) : null;
+  },
+
+  async listPosts(options = {}) {
+    const rows = await getDb()
+      .select()
+      .from(postsTable)
+      .where(postFilter(options))
+      .orderBy(...postOrderBy(options.sort ?? "hot"))
+      .limit(options.limit ?? 20)
+      .offset(options.offset ?? 0);
+
+    return rows.map(toPost);
+  },
+
+  async countPosts(options = {}) {
+    const [row] = await getDb()
+      .select({ value: count() })
+      .from(postsTable)
+      .where(postFilter(options));
+    return Number(row?.value ?? 0);
+  },
+
+  async updatePost(id: PostId, patch: UpdatePostInput) {
+    const [row] = await getDb()
+      .update(postsTable)
+      .set({
+        ...(patch.title !== undefined ? { title: patch.title } : {}),
+        ...(patch.body !== undefined ? { body: patch.body } : {}),
+        ...(patch.url !== undefined ? { url: patch.url } : {}),
+        ...(patch.imageUrl !== undefined ? { imageUrl: patch.imageUrl } : {}),
+        editedAt: new Date(),
+      })
+      .where(eq(postsTable.id, id))
+      .returning();
+
+    if (!row) throw new Error("Post not found");
+    return toPost(row);
+  },
+
+  async softDeletePost(id) {
+    // Tombstone only; comments beneath it must stay reachable.
+    const [row] = await getDb()
+      .update(postsTable)
+      .set({ deletedAt: new Date() })
+      .where(eq(postsTable.id, id))
+      .returning();
+
+    if (!row) throw new Error("Post not found");
+    return toPost(row);
+  },
+
+  async setPostRemoved(id, removedBy) {
+    const [row] = await getDb()
+      .update(postsTable)
+      .set({
+        removedAt: removedBy === null ? null : new Date(),
+        removedBy,
+      })
+      .where(eq(postsTable.id, id))
+      .returning();
+
+    if (!row) throw new Error("Post not found");
+    return toPost(row);
+  },
+
+  // --- Votes (TM2) --------------------------------------------------------
+
+  async castVote(targetType, targetId, voterId, value) {
+    /*
+     * One transaction: settle the vote row, then recompute the target's tallies
+     * from the votes table.
+     *
+     * The recompute is a single UPDATE ... FROM (SELECT ...), so it is both
+     * atomic and idempotent — which matters because an OCC conflict re-runs this
+     * whole callback. A relative `score + 1` update would be wrong here: on
+     * retry it would count the same vote twice.
+     */
+    return withTransaction(async (tx) => {
+      const [existing] = await tx
+        .select()
+        .from(votesTable)
+        .where(
+          and(
+            eq(votesTable.targetType, targetType),
+            eq(votesTable.targetId, targetId),
+            eq(votesTable.voterId, voterId),
+          ),
+        )
+        .limit(1);
+
+      if (!existing) {
+        await tx.insert(votesTable).values({
+          targetType,
+          targetId,
+          voterId,
+          value,
+        });
+      } else if (existing.value === value) {
+        // Same direction again: clear it rather than storing a zero.
+        await tx
+          .delete(votesTable)
+          .where(
+            and(
+              eq(votesTable.targetType, targetType),
+              eq(votesTable.targetId, targetId),
+              eq(votesTable.voterId, voterId),
+            ),
+          );
+      } else {
+        await tx
+          .update(votesTable)
+          .set({ value, updatedAt: new Date() })
+          .where(
+            and(
+              eq(votesTable.targetType, targetType),
+              eq(votesTable.targetId, targetId),
+              eq(votesTable.voterId, voterId),
+            ),
+          );
+      }
+
+      const [tally] = await tx
+        .select({
+          upvotes: sql<number>`coalesce(sum(case when ${votesTable.value} = 1 then 1 else 0 end), 0)::int`,
+          downvotes: sql<number>`coalesce(sum(case when ${votesTable.value} = -1 then 1 else 0 end), 0)::int`,
+        })
+        .from(votesTable)
+        .where(
+          and(
+            eq(votesTable.targetType, targetType),
+            eq(votesTable.targetId, targetId),
+          ),
+        );
+
+      const upvotes = Number(tally?.upvotes ?? 0);
+      const downvotes = Number(tally?.downvotes ?? 0);
+
+      // Only posts carry denormalized tallies; comment scores are read live.
+      if (targetType === "post") {
+        await tx
+          .update(postsTable)
+          .set({ upvotes, downvotes, score: upvotes - downvotes })
+          .where(eq(postsTable.id, targetId));
+      }
+
+      const [own] = await tx
+        .select({ value: votesTable.value })
+        .from(votesTable)
+        .where(
+          and(
+            eq(votesTable.targetType, targetType),
+            eq(votesTable.targetId, targetId),
+            eq(votesTable.voterId, voterId),
+          ),
+        )
+        .limit(1);
+
+      return {
+        targetType,
+        targetId,
+        score: upvotes - downvotes,
+        upvotes,
+        downvotes,
+        viewerVote: (own ? (Number(own.value) as 1 | -1) : 0) as 1 | 0 | -1,
+      };
+    });
+  },
+
+  async getScores(targetType, targetIds, viewerId) {
+    const result = new Map<string, Score>();
+    if (targetIds.length === 0) return result;
+
+    const unique = [...new Set(targetIds)];
+
+    // Zero-fill first so a target with no votes still gets an entry — callers
+    // treat a missing key as "not found" rather than "no votes yet".
+    for (const targetId of unique) {
+      result.set(targetId, {
+        targetType,
+        targetId,
+        score: 0,
+        upvotes: 0,
+        downvotes: 0,
+        viewerVote: 0,
+      });
+    }
+
+    const rows = await getDb()
+      .select({
+        targetId: votesTable.targetId,
+        upvotes: sql<number>`coalesce(sum(case when ${votesTable.value} = 1 then 1 else 0 end), 0)::int`,
+        downvotes: sql<number>`coalesce(sum(case when ${votesTable.value} = -1 then 1 else 0 end), 0)::int`,
+        viewerVote: viewerId
+          ? sql<number>`coalesce(max(case when ${votesTable.voterId} = ${viewerId} then ${votesTable.value} else 0 end), 0)::int`
+          : sql<number>`0::int`,
+      })
+      .from(votesTable)
+      .where(
+        and(
+          eq(votesTable.targetType, targetType),
+          inArray(votesTable.targetId, unique),
+        ),
+      )
+      .groupBy(votesTable.targetId);
+
+    for (const row of rows) {
+      const upvotes = Number(row.upvotes);
+      const downvotes = Number(row.downvotes);
+      result.set(row.targetId, {
+        targetType,
+        targetId: row.targetId,
+        score: upvotes - downvotes,
+        upvotes,
+        downvotes,
+        viewerVote: Number(row.viewerVote) as 1 | 0 | -1,
+      });
+    }
+
+    return result;
+  },
+
+  async listVotedTargetIds(voterId, targetType, value, limit = 25) {
+    const rows = await getDb()
+      .select({ targetId: votesTable.targetId })
+      .from(votesTable)
+      .where(
+        and(
+          eq(votesTable.voterId, voterId),
+          eq(votesTable.targetType, targetType),
+          eq(votesTable.value, value),
+        ),
+      )
+      .orderBy(desc(votesTable.createdAt))
+      .limit(limit);
+
+    return rows.map((row) => row.targetId);
+  },
 };
+
+// --- Post query construction ----------------------------------------------
+
+/**
+ * Filter shared by `listPosts` and `countPosts`, so a listing and its count can
+ * never disagree.
+ *
+ * Author-deleted and moderator-removed rows are excluded unconditionally. The
+ * integration contract flags this as a seam that breaks quietly: if any query
+ * forgets, moderator-removed posts keep appearing.
+ */
+function postFilter(options: PostListOptions) {
+  const conditions = [isNull(postsTable.deletedAt), isNull(postsTable.removedAt)];
+
+  if (options.subredditId) {
+    conditions.push(eq(postsTable.subredditId, options.subredditId));
+  }
+  if (options.subredditIds) {
+    // An empty subscription list must match nothing, not everything.
+    conditions.push(
+      options.subredditIds.length > 0
+        ? inArray(postsTable.subredditId, options.subredditIds)
+        : sql`false`,
+    );
+  }
+  if (options.authorId) {
+    conditions.push(eq(postsTable.authorId, options.authorId));
+  }
+  if (options.postType) {
+    conditions.push(eq(postsTable.postType, options.postType));
+  }
+
+  if (options.sort === "top") {
+    const cutoff = windowCutoff(options.window);
+    if (cutoff) conditions.push(gte(postsTable.createdAt, cutoff));
+  }
+
+  const query = options.query?.trim();
+  if (query) {
+    // Drizzle parameterises the pattern, and ilike escaping of % and _ is
+    // handled by escapeLike at the service layer.
+    const pattern = `%${query}%`;
+    const match = or(
+      ilike(postsTable.title, pattern),
+      ilike(postsTable.body, pattern),
+      ilike(sql`coalesce(${postsTable.url}, '')`, pattern),
+    );
+    if (match) conditions.push(match);
+  }
+
+  return and(...conditions);
+}
+
+/**
+ * SQL equivalents of the comparators in `ranking.ts`. The two must agree, or a
+ * sort behaves differently locally than deployed.
+ */
+function postOrderBy(sort: PostSort) {
+  const newest = desc(postsTable.createdAt);
+
+  switch (sort) {
+    case "new":
+      return [newest];
+    case "top":
+      return [desc(postsTable.score), newest];
+    case "controversial":
+      return [
+        desc(sql`case
+          when ${postsTable.upvotes} = 0 or ${postsTable.downvotes} = 0 then 0::double precision
+          else power(
+            (${postsTable.upvotes} + ${postsTable.downvotes})::double precision,
+            least(${postsTable.upvotes}, ${postsTable.downvotes})::double precision
+              / greatest(${postsTable.upvotes}, ${postsTable.downvotes})::double precision
+          )
+        end`),
+        newest,
+      ];
+    case "hot":
+    default:
+      return [
+        desc(sql`log(greatest(abs(${postsTable.score}), 1)::numeric)::double precision
+          + sign(${postsTable.score})::double precision
+            * (extract(epoch from ${postsTable.createdAt}) / 45000.0)`),
+        newest,
+      ];
+  }
+}

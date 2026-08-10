@@ -10,11 +10,15 @@
  * transactional counter updates).
  */
 
+import { comparePosts, windowCutoff } from "./ranking";
 import type {
   CreateCommentInput,
+  CreatePostInput,
+  PostListOptions,
   CreateSubredditInput,
   Repository,
   SubredditListOptions,
+  UpdatePostInput,
   UpdateSubredditInput,
 } from "./repository";
 import type {
@@ -22,12 +26,17 @@ import type {
   CommentId,
   ModLogEntry,
   ModeratorRole,
+  Post,
+  PostId,
+  Score,
   Subreddit,
   SubredditBan,
   SubredditId,
   SubredditModerator,
   SubredditRule,
   UserId,
+  Vote,
+  VoteTargetType,
 } from "./types";
 
 type Tables = {
@@ -38,6 +47,8 @@ type Tables = {
   bans: SubredditBan[];
   comments: Comment[];
   modLog: ModLogEntry[];
+  posts: Post[];
+  votes: Vote[];
 };
 
 // Survives Next.js dev hot-reload, which re-evaluates modules.
@@ -51,6 +62,8 @@ const db: Tables = (globalStore.__hotTakesDb ??= {
   bans: [],
   comments: [],
   modLog: [],
+  posts: [],
+  votes: [],
 });
 
 const now = () => new Date().toISOString();
@@ -424,7 +437,221 @@ export const memoryRepository: Repository = {
         .slice(0, limit),
     );
   },
+
+  // --- Posts (TM2) --------------------------------------------------------
+
+  async createPost(input: CreatePostInput) {
+    const post: Post = {
+      id: crypto.randomUUID(),
+      subredditId: input.subredditId,
+      authorId: input.authorId,
+      title: input.title,
+      body: input.body,
+      postType: input.postType,
+      url: input.url,
+      imageUrl: input.imageUrl,
+      createdAt: input.createdAt ?? now(),
+      editedAt: null,
+      deletedAt: null,
+      removedAt: null,
+      removedBy: null,
+      upvotes: 0,
+      downvotes: 0,
+      score: 0,
+    };
+    db.posts.push(post);
+    return clone(post);
+  },
+
+  async getPostById(id) {
+    const found = db.posts.find((p) => p.id === id);
+    return found ? clone(found) : null;
+  },
+
+  async listPosts(options = {}) {
+    const sort = options.sort ?? "hot";
+    const limit = options.limit ?? 20;
+    const offset = options.offset ?? 0;
+
+    return clone(
+      selectPosts(options)
+        .sort(comparePosts(sort))
+        .slice(offset, offset + limit),
+    );
+  },
+
+  async countPosts(options = {}) {
+    return selectPosts(options).length;
+  },
+
+  async updatePost(id: PostId, patch: UpdatePostInput) {
+    const post = db.posts.find((p) => p.id === id);
+    if (!post) throw new Error("Post not found");
+
+    if (patch.title !== undefined) post.title = patch.title;
+    if (patch.body !== undefined) post.body = patch.body;
+    if (patch.url !== undefined) post.url = patch.url;
+    if (patch.imageUrl !== undefined) post.imageUrl = patch.imageUrl;
+    post.editedAt = now();
+
+    return clone(post);
+  },
+
+  async softDeletePost(id) {
+    const post = db.posts.find((p) => p.id === id);
+    if (!post) throw new Error("Post not found");
+    // Tombstone only; comments beneath it must stay reachable.
+    post.deletedAt = now();
+    return clone(post);
+  },
+
+  async setPostRemoved(id, removedBy) {
+    const post = db.posts.find((p) => p.id === id);
+    if (!post) throw new Error("Post not found");
+    post.removedAt = removedBy === null ? null : now();
+    post.removedBy = removedBy;
+    return clone(post);
+  },
+
+  // --- Votes (TM2) --------------------------------------------------------
+
+  async castVote(targetType, targetId, voterId, value) {
+    const existing = db.votes.find(
+      (v) =>
+        v.targetType === targetType &&
+        v.targetId === targetId &&
+        v.voterId === voterId,
+    );
+
+    if (!existing) {
+      db.votes.push({
+        targetType,
+        targetId,
+        voterId,
+        value,
+        createdAt: now(),
+        updatedAt: null,
+      });
+    } else if (existing.value === value) {
+      // Same direction again: clear the vote rather than storing a zero.
+      db.votes.splice(db.votes.indexOf(existing), 1);
+    } else {
+      existing.value = value;
+      existing.updatedAt = now();
+    }
+
+    return refreshTallies(targetType, targetId, voterId);
+  },
+
+  async getScores(targetType, targetIds, viewerId) {
+    const wanted = new Set(targetIds);
+    const result = new Map<string, Score>();
+
+    for (const targetId of wanted) {
+      result.set(targetId, tallyFor(targetType, targetId, viewerId));
+    }
+
+    return result;
+  },
+
+  async listVotedTargetIds(voterId, targetType, value, limit = 25) {
+    return db.votes
+      .filter(
+        (v) =>
+          v.voterId === voterId &&
+          v.targetType === targetType &&
+          v.value === value,
+      )
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, limit)
+      .map((v) => v.targetId);
+  },
 };
+
+/**
+ * Shared filter for post listings.
+ *
+ * Author-deleted and moderator-removed posts are excluded here rather than at
+ * each call site, so no listing, sort or search can forget — which the
+ * integration contract calls out as a seam that breaks quietly.
+ */
+function selectPosts(options: PostListOptions): Post[] {
+  const cutoff = options.sort === "top" ? windowCutoff(options.window) : null;
+  const query = options.query?.trim().toLowerCase();
+
+  return db.posts.filter((post) => {
+    if (post.deletedAt || post.removedAt) return false;
+
+    if (options.subredditId && post.subredditId !== options.subredditId) {
+      return false;
+    }
+    if (options.subredditIds && !options.subredditIds.includes(post.subredditId)) {
+      return false;
+    }
+    if (options.authorId && post.authorId !== options.authorId) return false;
+    if (options.postType && post.postType !== options.postType) return false;
+    if (cutoff && Date.parse(post.createdAt) < cutoff.getTime()) return false;
+
+    if (query) {
+      const haystack = `${post.title} ${post.body} ${post.url ?? ""}`.toLowerCase();
+      if (!haystack.includes(query)) return false;
+    }
+
+    return true;
+  });
+}
+
+/** Count votes for one target and report the viewer's own direction. */
+function tallyFor(
+  targetType: VoteTargetType,
+  targetId: string,
+  viewerId: UserId | null,
+): Score {
+  let upvotes = 0;
+  let downvotes = 0;
+  let viewerVote: 1 | 0 | -1 = 0;
+
+  for (const vote of db.votes) {
+    if (vote.targetType !== targetType || vote.targetId !== targetId) continue;
+    if (vote.value === 1) upvotes += 1;
+    else downvotes += 1;
+    if (viewerId && vote.voterId === viewerId) viewerVote = vote.value;
+  }
+
+  return {
+    targetType,
+    targetId,
+    score: upvotes - downvotes,
+    upvotes,
+    downvotes,
+    viewerVote,
+  };
+}
+
+/**
+ * Recompute the target's tallies from the votes table and write them back.
+ *
+ * Recomputed rather than incremented so the operation is idempotent — the DSQL
+ * implementation runs the equivalent inside a retryable transaction.
+ */
+function refreshTallies(
+  targetType: VoteTargetType,
+  targetId: string,
+  viewerId: UserId | null,
+): Score {
+  const tally = tallyFor(targetType, targetId, viewerId);
+
+  if (targetType === "post") {
+    const post = db.posts.find((p) => p.id === targetId);
+    if (post) {
+      post.upvotes = tally.upvotes;
+      post.downvotes = tally.downvotes;
+      post.score = tally.score;
+    }
+  }
+
+  return tally;
+}
 
 /** Test-only: drop all state. */
 export function resetMemoryDb(): void {
@@ -435,4 +662,6 @@ export function resetMemoryDb(): void {
   db.bans.length = 0;
   db.comments.length = 0;
   db.modLog.length = 0;
+  db.posts.length = 0;
+  db.votes.length = 0;
 }

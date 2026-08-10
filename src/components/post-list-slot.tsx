@@ -1,25 +1,30 @@
 /**
- * Placeholder for TM2's post list.
+ * TM2's post list, rendered into TM3's page slots.
  *
- * TM2 owns post rendering, sorting (hot/new/top/controversial), and pagination.
- * This component marks the seam: replace the body with TM2's list component,
- * which should accept `subredditId` (or null for the home feed).
+ * This file was the seam marker TM3 shipped; the body is now the real list. The
+ * props are kept as TM3 calls them (`subredditName`) and mapped onto the list's
+ * own options, so their pages did not need to change.
  *
- * TM2's queries MUST exclude comments and posts flagged `removedAt` by
- * moderation, or removed content keeps appearing in listings and search.
+ * Removed and deleted posts are filtered in the repository, so every listing,
+ * sort and search excludes moderator-removed content without each call site
+ * having to remember.
  */
+
+import PostList from "./post-list";
+
 export default function PostListSlot({
   subredditName,
+  subredditSlug,
+  /** Home feed: restrict to communities the viewer has joined. */
+  subscribedOnly = false,
 }: {
   subredditName?: string;
+  subredditSlug?: string;
+  subscribedOnly?: boolean;
 }) {
-  return (
-    <div className="rounded-lg border border-dashed border-black/[.15] px-4 py-8 text-center dark:border-white/[.18]">
-      <p className="text-sm font-medium">Post list goes here</p>
-      <p className="mt-1 text-xs text-zinc-500">
-        Owned by TM2 (Posts &amp; Voting)
-        {subredditName ? ` — filtered to r/${subredditName}` : " — home feed"}
-      </p>
-    </div>
-  );
+  // TM3's subreddit page passes the display name; the API takes a slug, and the
+  // slug is the lowercased name.
+  const slug = subredditSlug ?? subredditName?.toLowerCase();
+
+  return <PostList subredditSlug={slug} subscribedOnly={subscribedOnly} />;
 }

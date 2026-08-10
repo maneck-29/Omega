@@ -24,7 +24,7 @@ export default async function Home() {
             Home feed — posts from subreddits you have joined.
           </p>
         </header>
-        <PostListSlot />
+        <PostListSlot subscribedOnly={Boolean(user)} />
       </main>
 
       <aside className="hidden w-64 shrink-0 flex-col gap-6 lg:flex">

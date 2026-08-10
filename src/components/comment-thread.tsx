@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { CommentNode, CommentSort } from "@/lib/types";
 import { VOTING_AVAILABLE } from "@/lib/scores";
 import ReplyForm from "./reply-form";
+import VoteControl from "./vote-control";
 
 /**
  * Recursive thread renderer.
@@ -54,11 +55,6 @@ function CommentRow({
               {author?.username ?? "unknown"}
             </span>
           )}
-          {VOTING_AVAILABLE && score && (
-            <span>
-              {score.score} {Math.abs(score.score) === 1 ? "point" : "points"}
-            </span>
-          )}
           <time dateTime={comment.createdAt}>{relativeTime(comment.createdAt)}</time>
           {comment.editedAt && <span className="italic">edited</span>}
         </header>
@@ -72,6 +68,22 @@ function CommentRow({
         >
           {comment.body}
         </p>
+
+        {/*
+          Comment voting goes through the same control and the same endpoint as
+          post voting — votes are keyed by (targetType, targetId), so one table
+          and one component serve both. A tombstoned comment is not votable.
+        */}
+        {VOTING_AVAILABLE && score && !isTombstone && (
+          <div className="mt-1">
+            <VoteControl
+              targetId={comment.id}
+              targetType="comment"
+              score={score.score}
+              viewerVote={score.viewerVote}
+            />
+          </div>
+        )}
 
         {!isTombstone && (
           <ReplyForm
