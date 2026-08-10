@@ -11,186 +11,14 @@
  * UI can say so rather than failing. That also keeps the app working with no
  * Bedrock integration wired at all.
  *
- * The Bedrock integration injects only BEDROCK_REGION — the model is named here.
+ * The client, model candidates, region resolution and cooldown bookkeeping are
+ * shared with every other AI feature in `./bedrock`.
  */
 
-import {
-  BedrockRuntimeClient,
-  ConverseCommand,
-} from "@aws-sdk/client-bedrock-runtime";
+import { converse, type AiSource } from "./bedrock";
 import { getRepository } from "./db";
 import { listPostViews, toPostViews, type ListPostsResult } from "./posts";
 import type { PostView, SubredditId, UserId } from "./types";
-
-export type AiSource = "bedrock" | "fallback";
-
-const REGION =
-  process.env.BEDROCK_REGION ?? process.env.AWS_REGION ?? "us-east-2";
-
-/**
- * Candidate models, cheapest tier first — these tasks produce a sentence or two,
- * so a small model is the right fit. Availability varies by account and region,
- * so an explicit BEDROCK_MODEL_ID wins and the rest are fallbacks.
- */
-const MODEL_CANDIDATES = [
-  process.env.BEDROCK_MODEL_ID,
-  "us.amazon.nova-micro-v1:0",
-  "amazon.nova-micro-v1:0",
-  "us.amazon.nova-lite-v1:0",
-  "amazon.nova-lite-v1:0",
-  "us.anthropic.claude-3-5-haiku-20241022-v1:0",
-  "anthropic.claude-3-5-haiku-20241022-v1:0",
-].filter((id): id is string => Boolean(id));
-
-let client: BedrockRuntimeClient | null = null;
-
-function getClient(): BedrockRuntimeClient {
-  client ??= new BedrockRuntimeClient({ region: REGION });
-  return client;
-}
-
-/**
- * Why a model was skipped, and for how long.
- *
- * The distinction matters: a model the account genuinely cannot call should not
- * be retried on every request, but a failure caused by expired credentials or
- * throttling says nothing about the model. Blacklisting on those would disable
- * AI for the life of the process — a credential refresh would never be picked
- * up, and the feature would silently stay in fallback for no reason.
- */
-const COOLDOWN_MS = {
-  /** Model is not enabled or does not exist here: unlikely to change soon. */
-  unavailable: 30 * 60 * 1000,
-  /** Throttled: back off briefly, then try again. */
-  throttled: 30 * 1000,
-} as const;
-
-/** modelId -> timestamp after which it may be retried. */
-const cooldowns = new Map<string, number>();
-
-/**
- * Errors that are about the caller or the connection, never about the model.
- * These must not put a model on cooldown at all.
- */
-function isTransientAuthOrNetworkError(name: string, message: string): boolean {
-  const signals = [
-    "expiredtoken",
-    "expired",
-    "credential",
-    "unrecognizedclient",
-    "invalidsignature",
-    "notauthorized",
-    "timeout",
-    "networkingerror",
-    "econnreset",
-    "enotfound",
-    "socket",
-  ];
-  const haystack = `${name} ${message}`.toLowerCase();
-  return signals.some((signal) => haystack.includes(signal));
-}
-
-function isThrottlingError(name: string, message: string): boolean {
-  const haystack = `${name} ${message}`.toLowerCase();
-  return (
-    haystack.includes("throttl") ||
-    haystack.includes("too many requests") ||
-    haystack.includes("serviceunavailable") ||
-    haystack.includes("modelnotready")
-  );
-}
-
-function noteFailure(modelId: string, cause: unknown): void {
-  const name = cause instanceof Error ? cause.name : "";
-  const message = cause instanceof Error ? cause.message : String(cause);
-
-  if (isTransientAuthOrNetworkError(name, message)) {
-    // Deliberately no cooldown: refreshed credentials must take effect at once.
-    console.warn(`[ai] ${modelId} failed for a transient reason: ${message}`);
-    return;
-  }
-
-  const cooldown = isThrottlingError(name, message)
-    ? COOLDOWN_MS.throttled
-    : COOLDOWN_MS.unavailable;
-
-  cooldowns.set(modelId, Date.now() + cooldown);
-  console.warn(
-    `[ai] ${modelId} unavailable, retrying in ${Math.round(cooldown / 1000)}s: ${message}`,
-  );
-}
-
-function isOnCooldown(modelId: string): boolean {
-  const until = cooldowns.get(modelId);
-  if (until === undefined) return false;
-  if (until > Date.now()) return true;
-
-  cooldowns.delete(modelId);
-  return false;
-}
-
-/** Diagnostics for the health endpoint: which models are currently skipped. */
-export function bedrockStatus(): {
-  region: string;
-  candidates: string[];
-  cooledDown: Array<{ modelId: string; retryInSeconds: number }>;
-} {
-  const now = Date.now();
-  return {
-    region: REGION,
-    candidates: MODEL_CANDIDATES,
-    cooledDown: [...cooldowns.entries()]
-      .filter(([, until]) => until > now)
-      .map(([modelId, until]) => ({
-        modelId,
-        retryInSeconds: Math.max(0, Math.round((until - now) / 1000)),
-      })),
-  };
-}
-
-async function converse(options: {
-  system: string;
-  user: string;
-  maxTokens?: number;
-  temperature?: number;
-}): Promise<{ text: string; model: string } | null> {
-  const candidates = MODEL_CANDIDATES.filter((id) => !isOnCooldown(id));
-
-  // Every candidate is cooling down: try the whole list anyway rather than
-  // returning a fallback without attempting a single call.
-  const attempts = candidates.length > 0 ? candidates : MODEL_CANDIDATES;
-
-  for (const modelId of attempts) {
-    try {
-      const response = await getClient().send(
-        new ConverseCommand({
-          modelId,
-          system: [{ text: options.system }],
-          messages: [{ role: "user", content: [{ text: options.user }] }],
-          inferenceConfig: {
-            maxTokens: options.maxTokens ?? 300,
-            temperature: options.temperature ?? 0.9,
-          },
-        }),
-      );
-
-      const text = response.output?.message?.content
-        ?.map((block) => block.text ?? "")
-        .join("")
-        .trim();
-
-      if (text) {
-        // A success clears any prior cooldown for this model.
-        cooldowns.delete(modelId);
-        return { text, model: modelId };
-      }
-    } catch (cause) {
-      noteFailure(modelId, cause);
-    }
-  }
-
-  return null;
-}
 
 // --- 1. Hot take generation ------------------------------------------------
 
@@ -456,3 +284,5 @@ export async function listForYouViews(
 }
 
 export type { PostView };
+/** Re-exported so existing callers keep importing AI types from one place. */
+export type { AiSource };

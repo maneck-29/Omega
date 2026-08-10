@@ -1,8 +1,7 @@
 import { requireCurrentUser } from "@/lib/auth";
-import { badRequest, forbidden } from "@/lib/errors";
+import { badRequest } from "@/lib/errors";
 import {
   deleteObject,
-  isMediaConfigured,
   keyFromUrl,
   uploadSubredditImage,
   type MediaKind,
@@ -11,7 +10,7 @@ import { assertModerator } from "@/lib/permissions";
 import { handler } from "@/lib/route-helpers";
 import {
   getSubredditBySlugOrThrow,
-  updateSubredditSettings,
+  setSubredditImage,
 } from "@/lib/subreddits";
 
 type Params = { params: Promise<{ slug: string }> };
@@ -26,20 +25,16 @@ const KINDS: MediaKind[] = ["banner", "icon"];
  * The upload runs server-side because the Omega S3 integration's credentials are
  * never exposed to the browser. On success the subreddit's URL field is updated
  * and the previous object deleted, so replaced images do not accumulate.
+ *
+ * Works with or without S3 — `uploadSubredditImage` inlines the image when no
+ * bucket is configured, so this route never has to refuse an upload for reasons
+ * the moderator cannot do anything about.
  */
 export async function POST(request: Request, { params }: Params) {
   return handler(
     async () => {
       const { slug } = await params;
       const user = await requireCurrentUser();
-
-      if (!isMediaConfigured()) {
-        throw forbidden(
-          "Image uploads are not configured. Connect the Omega S3 integration, " +
-            "or set the banner and icon URLs directly in settings.",
-          "media_not_configured",
-        );
-      }
 
       const subreddit = await getSubredditBySlugOrThrow(slug);
       await assertModerator(user.id, subreddit.id);
@@ -78,9 +73,12 @@ export async function POST(request: Request, { params }: Params) {
         kind === "banner" ? subreddit.bannerUrl : subreddit.iconUrl,
       );
 
-      const updated = await updateSubredditSettings(slug, user.id, {
-        ...(kind === "banner" ? { bannerUrl: url } : { iconUrl: url }),
-      });
+      const updated = await setSubredditImage(
+        slug,
+        user.id,
+        kind as MediaKind,
+        url,
+      );
 
       // Best-effort: a leaked object is preferable to failing a successful
       // upload, and lifecycle rules can sweep orphans.
@@ -96,4 +94,41 @@ export async function POST(request: Request, { params }: Params) {
     },
     { status: 201 },
   );
+}
+
+/**
+ * DELETE /api/subreddits/[slug]/images?kind=banner|icon — clear an image.
+ *
+ * Moderator only. Removes the stored object when one exists, so clearing an
+ * image does not leave it paid for and reachable by URL.
+ */
+export async function DELETE(request: Request, { params }: Params) {
+  return handler(async () => {
+    const { slug } = await params;
+    const user = await requireCurrentUser();
+
+    const kind = new URL(request.url).searchParams.get("kind");
+    if (typeof kind !== "string" || !KINDS.includes(kind as MediaKind)) {
+      throw badRequest("Query 'kind' must be 'banner' or 'icon'", "invalid_kind");
+    }
+
+    const subreddit = await getSubredditBySlugOrThrow(slug);
+    await assertModerator(user.id, subreddit.id);
+
+    const previousKey = keyFromUrl(
+      kind === "banner" ? subreddit.bannerUrl : subreddit.iconUrl,
+    );
+
+    const updated = await setSubredditImage(slug, user.id, kind as MediaKind, "");
+
+    if (previousKey) {
+      try {
+        await deleteObject(previousKey);
+      } catch (error) {
+        console.error("Failed to delete cleared image", previousKey, error);
+      }
+    }
+
+    return { cleared: kind, subreddit: updated };
+  });
 }

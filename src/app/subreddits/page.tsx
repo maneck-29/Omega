@@ -1,4 +1,5 @@
 import Link from "next/link";
+import SubredditIcon from "@/components/subreddit-icon";
 import { ensureSeeded } from "@/lib/seed";
 import { listSubreddits } from "@/lib/subreddits";
 
@@ -83,21 +84,29 @@ export default async function SubredditsPage({
         <ul className="flex flex-col divide-y divide-black/[.06] rounded-lg border border-black/[.08] dark:divide-white/[.08] dark:border-white/[.12]">
           {subreddits.map((subreddit) => (
             <li key={subreddit.id} className="px-4 py-3">
-              <Link href={`/r/${subreddit.slug}`} className="group flex flex-col gap-1">
-                <div className="flex items-center justify-between gap-4">
-                  <span className="font-medium group-hover:underline">
-                    {subreddit.name}
-                  </span>
-                  <span className="shrink-0 text-xs text-zinc-500">
-                    {subreddit.subscriberCount}{" "}
-                    {subreddit.subscriberCount === 1 ? "member" : "members"}
-                  </span>
+              <Link href={`/r/${subreddit.slug}`} className="group flex gap-3">
+                <SubredditIcon
+                  slug={subreddit.slug}
+                  name={subreddit.name}
+                  iconUrl={subreddit.iconUrl}
+                  size="md"
+                />
+                <div className="flex min-w-0 flex-1 flex-col gap-1">
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="font-medium group-hover:underline">
+                      {subreddit.name}
+                    </span>
+                    <span className="shrink-0 text-xs text-zinc-500">
+                      {subreddit.subscriberCount}{" "}
+                      {subreddit.subscriberCount === 1 ? "member" : "members"}
+                    </span>
+                  </div>
+                  {subreddit.description && (
+                    <p className="line-clamp-2 text-sm text-zinc-600 dark:text-zinc-400">
+                      {subreddit.description}
+                    </p>
+                  )}
                 </div>
-                {subreddit.description && (
-                  <p className="line-clamp-2 text-sm text-zinc-600 dark:text-zinc-400">
-                    {subreddit.description}
-                  </p>
-                )}
               </Link>
             </li>
           ))}

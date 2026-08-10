@@ -2,12 +2,14 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import CommentThread from "@/components/comment-thread";
 import PostDetail from "@/components/post-detail";
+import ThreadSummaryPanel from "@/components/thread-summary";
 import { getCurrentUser } from "@/lib/auth";
 import { getCommentTree } from "@/lib/comments";
 import { DomainError } from "@/lib/errors";
 import { getPostView } from "@/lib/posts";
 import { ensureSeeded } from "@/lib/seed";
 import { getSubredditView } from "@/lib/subreddits";
+import { MIN_COMMENTS_FOR_SUMMARY } from "@/lib/summary";
 import type { CommentSort } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -93,6 +95,18 @@ export default async function PostPage({
             Its comments are kept below.
           </p>
         </article>
+      )}
+
+      {/*
+        Offered only when there is enough thread to be worth condensing, and only
+        on the full view: a summary of the whole thread sitting above a re-rooted
+        subtree would describe comments that are not on screen.
+
+        `postView` gates it too — the summary needs the post title for context,
+        and a tombstoned post has none the reader can see.
+      */}
+      {postView && !query.rootId && total >= MIN_COMMENTS_FOR_SUMMARY && (
+        <ThreadSummaryPanel postId={postId} />
       )}
 
       {query.rootId && (

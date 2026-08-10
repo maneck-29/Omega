@@ -131,6 +131,36 @@ export async function updateSubredditSettings(
   });
 }
 
+/**
+ * Sets a banner or icon to a URL this server produced.
+ *
+ * Separate from `updateSubredditSettings` because that validates URLs as http(s)
+ * to keep `javascript:` and `data:` out of fields a user can type into. An
+ * uploaded image may legitimately be a `data:` URL when S3 is not connected, and
+ * it never passed through a request body — it was built from bytes this server
+ * sniffed and encoded. Validating it again would reject the one caller that is
+ * trustworthy, and relaxing the shared validator would accept the ones that are
+ * not.
+ */
+export async function setSubredditImage(
+  slug: string,
+  actorId: UserId,
+  kind: "banner" | "icon",
+  url: string,
+): Promise<Subreddit> {
+  const subreddit = await getSubredditBySlugOrThrow(slug);
+  await assertModerator(actorId, subreddit.id);
+
+  // Empty clears the field. Storing "" instead of null would render as a broken
+  // image rather than falling back.
+  const value = url === "" ? null : url;
+
+  return getRepository().updateSubreddit(
+    subreddit.id,
+    kind === "banner" ? { bannerUrl: value } : { iconUrl: value },
+  );
+}
+
 // --- Rules ----------------------------------------------------------------
 
 export async function addRule(

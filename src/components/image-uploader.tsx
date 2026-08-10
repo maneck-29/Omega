@@ -3,9 +3,19 @@
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 
+function describeLimit(bytes: number): string {
+  return bytes >= 1024 * 1024
+    ? `${Math.floor(bytes / 1024 / 1024)} MB`
+    : `${Math.floor(bytes / 1024)} KB`;
+}
+
 /**
- * Banner and icon upload. Rendered only when the S3 integration is connected;
- * otherwise the settings form's URL fields remain the way to set an image.
+ * Banner and icon upload.
+ *
+ * Always rendered: the server stores the bytes in S3 when the integration is
+ * connected and inlines them into the record when it is not, so picking a file
+ * works either way. `maxBytes` differs between those two, which is why the limit
+ * comes from the server rather than being hardcoded here.
  */
 export default function ImageUploader({
   slug,
@@ -24,13 +34,37 @@ export default function ImageUploader({
   const [error, setError] = useState<string | null>(null);
   const [url, setUrl] = useState(currentUrl);
 
+  async function clear() {
+    setPending(true);
+    setError(null);
+
+    try {
+      const response = await fetch(
+        `/api/subreddits/${slug}/images?kind=${kind}`,
+        { method: "DELETE" },
+      );
+
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(payload?.error ?? `Could not remove (${response.status})`);
+      }
+
+      setUrl(null);
+      router.refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not remove");
+    } finally {
+      setPending(false);
+    }
+  }
+
   async function upload(file: File) {
     setPending(true);
     setError(null);
 
     // Mirrors the server check so an oversized file is not sent at all.
     if (file.size > maxBytes) {
-      setError(`File must be at most ${Math.floor(maxBytes / 1024 / 1024)} MB`);
+      setError(`File must be at most ${describeLimit(maxBytes)}`);
       setPending(false);
       return;
     }
@@ -65,16 +99,26 @@ export default function ImageUploader({
       <span className="text-sm font-medium capitalize">{kind}</span>
 
       {url && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={url}
-          alt={`Current ${kind}`}
-          className={
-            kind === "banner"
-              ? "h-16 w-full rounded object-cover"
-              : "h-12 w-12 rounded-full object-cover"
-          }
-        />
+        <div className="flex items-center gap-3">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={url}
+            alt={`Current ${kind}`}
+            className={
+              kind === "banner"
+                ? "h-16 flex-1 rounded object-cover"
+                : "h-12 w-12 rounded-full object-cover"
+            }
+          />
+          <button
+            type="button"
+            onClick={() => void clear()}
+            disabled={pending}
+            className="shrink-0 rounded px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-500/10 disabled:opacity-40 dark:text-red-400"
+          >
+            Remove
+          </button>
+        </div>
       )}
 
       <input
@@ -91,7 +135,7 @@ export default function ImageUploader({
       />
 
       <p className="text-xs text-zinc-500">
-        PNG, JPEG, WebP, or GIF up to {Math.floor(maxBytes / 1024 / 1024)} MB.
+        PNG, JPEG, WebP, or GIF up to {describeLimit(maxBytes)}.
         {pending && " Uploading…"}
       </p>
 

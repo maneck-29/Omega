@@ -3,22 +3,22 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-/** Subreddit settings. Name is immutable — it is the identity and the URL. */
+/**
+ * Subreddit settings. Name is immutable — it is the identity and the URL.
+ *
+ * Banner and icon are not here: they are set by uploading a file in the Images
+ * section above. Keeping a URL field alongside an upload gave two ways to set one
+ * image, and the field could point at a host that later stopped serving it.
+ */
 export default function SettingsForm({
   slug,
   initialDescription,
-  initialBannerUrl,
-  initialIconUrl,
 }: {
   slug: string;
   initialDescription: string;
-  initialBannerUrl: string;
-  initialIconUrl: string;
 }) {
   const router = useRouter();
   const [description, setDescription] = useState(initialDescription);
-  const [bannerUrl, setBannerUrl] = useState(initialBannerUrl);
-  const [iconUrl, setIconUrl] = useState(initialIconUrl);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -33,12 +33,7 @@ export default function SettingsForm({
       const response = await fetch(`/api/subreddits/${slug}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          description,
-          // Empty string clears the field; the API maps it to null.
-          bannerUrl: bannerUrl.trim() === "" ? null : bannerUrl,
-          iconUrl: iconUrl.trim() === "" ? null : iconUrl,
-        }),
+        body: JSON.stringify({ description }),
       });
 
       if (!response.ok) {
@@ -68,28 +63,6 @@ export default function SettingsForm({
           rows={3}
           maxLength={500}
           className={`${inputClass} resize-y`}
-        />
-      </label>
-
-      <label className="flex flex-col gap-1.5">
-        <span className="text-sm font-medium">Banner URL</span>
-        <input
-          type="url"
-          value={bannerUrl}
-          onChange={(event) => setBannerUrl(event.target.value)}
-          placeholder="https://…"
-          className={inputClass}
-        />
-      </label>
-
-      <label className="flex flex-col gap-1.5">
-        <span className="text-sm font-medium">Icon URL</span>
-        <input
-          type="url"
-          value={iconUrl}
-          onChange={(event) => setIconUrl(event.target.value)}
-          placeholder="https://…"
-          className={inputClass}
         />
       </label>
 

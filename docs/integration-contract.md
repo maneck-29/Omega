@@ -141,7 +141,7 @@ App Router means shared directories, so ownership is per-file:
 | --- | --- |
 | `/` | TM3 shell, TM2 feed component |
 | `/r/[subreddit]` | TM3 shell, TM2 post list in the slot |
-| `/r/[subreddit]/comments/[postId]` | TM3 shell + thread, TM2 post body |
+| `/r/[subreddit]/comments/[postId]` | TM3 shell + thread + TL;DR, TM2 post body |
 | `/r/[subreddit]/submit` | TM2 |
 | `/subreddits`, `/subreddits/create` | TM3 |
 | `/u/[username]`, `/settings` | TM1 |
@@ -176,6 +176,7 @@ Subreddits
 | `PATCH` | `/api/subreddits/[slug]` — settings, moderator only |
 | `GET`/`POST` | `/api/subreddits/[slug]/rules` |
 | `PUT`/`DELETE` | `/api/subreddits/[slug]/subscription` — idempotent |
+| `POST`/`DELETE` | `/api/subreddits/[slug]/images` — upload or clear banner/icon |
 
 Comments
 
@@ -183,6 +184,7 @@ Comments
 | --- | --- |
 | `GET` | `/api/posts/[postId]/comments` — `?sort=`, `?rootId=` |
 | `POST` | `/api/posts/[postId]/comments` — create or reply |
+| `POST` | `/api/posts/[postId]/summary` — AI TL;DR of the thread |
 | `PATCH` | `/api/comments/[commentId]` — author only |
 | `DELETE` | `/api/comments/[commentId]?subreddit=` — author or mod, soft delete |
 

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import PostListSlot from "@/components/post-list-slot";
+import SubredditIcon from "@/components/subreddit-icon";
 import SubscribeButton from "@/components/subscribe-button";
 import { getCurrentUser } from "@/lib/auth";
 import { DomainError } from "@/lib/errors";
@@ -45,18 +46,42 @@ export default async function SubredditPage({
 
   return (
     <div className="flex flex-1 flex-col">
-      <div className="h-24 w-full bg-gradient-to-r from-indigo-500 to-sky-400" />
+      {/*
+        The uploaded banner, falling back to a gradient so the page keeps its
+        shape for communities that never set one. A plain <img> because Omega
+        does not support Next.js image optimisation.
+      */}
+      {view.bannerUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={view.bannerUrl}
+          alt={`${view.name} banner`}
+          className="h-24 w-full bg-black/5 object-cover dark:bg-white/10 sm:h-32"
+        />
+      ) : (
+        <div className="h-24 w-full bg-gradient-to-r from-indigo-500 to-sky-400 sm:h-32" />
+      )}
 
       <div className="mx-auto flex w-full max-w-5xl flex-1 gap-8 px-6 py-6">
         <main className="flex flex-1 flex-col gap-6">
           <header className="flex flex-wrap items-start justify-between gap-4">
-            <div className="flex flex-col gap-1">
-              <h1 className="text-2xl font-semibold tracking-tight">
-                {view.name}
-              </h1>
-              <p className="max-w-prose text-sm text-zinc-600 dark:text-zinc-400">
-                {view.description || "No description yet."}
-              </p>
+            <div className="flex items-start gap-3">
+              {/* Pulled up over the banner, the way Reddit sits an icon on it. */}
+              <SubredditIcon
+                slug={view.slug}
+                name={view.name}
+                iconUrl={view.iconUrl}
+                size="lg"
+                className="-mt-10 ring-4 ring-white dark:ring-black"
+              />
+              <div className="flex flex-col gap-1">
+                <h1 className="text-2xl font-semibold tracking-tight">
+                  {view.name}
+                </h1>
+                <p className="max-w-prose text-sm text-zinc-600 dark:text-zinc-400">
+                  {view.description || "No description yet."}
+                </p>
+              </div>
             </div>
             {user && (
               <SubscribeButton

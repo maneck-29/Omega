@@ -4,7 +4,12 @@ import RulesEditor from "@/components/rules-editor";
 import SettingsForm from "@/components/settings-form";
 import { getCurrentUser } from "@/lib/auth";
 import { DomainError } from "@/lib/errors";
-import { MAX_UPLOAD_BYTES, isMediaConfigured } from "@/lib/media";
+import {
+  MAX_INLINE_BYTES,
+  MAX_UPLOAD_BYTES,
+  isMediaConfigured,
+  maxUploadBytes,
+} from "@/lib/media";
 import { getSubredditView } from "@/lib/subreddits";
 
 export const dynamic = "force-dynamic";
@@ -25,45 +30,50 @@ export default async function EditSubredditPage({
     throw error;
   }
 
-  const mediaEnabled = isMediaConfigured();
+  /*
+   * Uploads work either way — S3 when the integration is connected, inlined into
+   * the record when it is not — so the picker is always shown. Only the size
+   * limit and the note below change.
+   */
+  const usingS3 = isMediaConfigured();
+  const limit = maxUploadBytes();
 
   return (
     <div className="flex flex-col gap-10">
-      {mediaEnabled && (
-        <section className="flex flex-col gap-4">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            Images
-          </h2>
-          <ImageUploader
-            slug={view.slug}
-            kind="banner"
-            currentUrl={view.bannerUrl}
-            maxBytes={MAX_UPLOAD_BYTES}
-          />
-          <ImageUploader
-            slug={view.slug}
-            kind="icon"
-            currentUrl={view.iconUrl}
-            maxBytes={MAX_UPLOAD_BYTES}
-          />
-        </section>
-      )}
+      <section className="flex flex-col gap-4">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
+          Images
+        </h2>
+        <ImageUploader
+          slug={view.slug}
+          kind="banner"
+          currentUrl={view.bannerUrl}
+          maxBytes={limit}
+        />
+        <ImageUploader
+          slug={view.slug}
+          kind="icon"
+          currentUrl={view.iconUrl}
+          maxBytes={limit}
+        />
+        {!usingS3 && (
+          <p className="rounded-md border border-black/[.08] px-3 py-2 text-xs text-zinc-500 dark:border-white/[.12]">
+            Images are stored inline because the S3 integration is not connected,
+            so uploads are limited to{" "}
+            {Math.floor(MAX_INLINE_BYTES / 1024)} KB. Connect it to store files
+            in a bucket and raise the limit to{" "}
+            {Math.floor(MAX_UPLOAD_BYTES / 1024 / 1024)} MB.
+          </p>
+        )}
+      </section>
 
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
           Settings
         </h2>
-        {!mediaEnabled && (
-          <p className="rounded-md border border-black/[.08] px-3 py-2 text-xs text-zinc-500 dark:border-white/[.12]">
-            Image uploads are not configured. Connect the Omega S3 integration to
-            upload files, or paste image URLs below.
-          </p>
-        )}
         <SettingsForm
           slug={view.slug}
           initialDescription={view.description}
-          initialBannerUrl={view.bannerUrl ?? ""}
-          initialIconUrl={view.iconUrl ?? ""}
         />
       </section>
 

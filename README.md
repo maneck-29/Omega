@@ -67,9 +67,13 @@ curl -H "Cookie: dev_user=user-2" http://localhost:3000/api/me/subscriptions
 
 ## Integrations
 
-Optional Omega integrations — S3 for subreddit images, Bedrock for moderation
-triage. Each degrades gracefully when absent, so local development needs no AWS
-access. See [docs/integrations.md](docs/integrations.md).
+Optional Omega integrations — S3 for subreddit images, Bedrock for AI. Each
+degrades gracefully when absent, so local development needs no AWS access:
+uploads inline the image into the record instead of using a bucket, and AI
+features fall back to local implementations and say so.
+
+`GET /api/health` reports which are actually wired. See
+[docs/integrations.md](docs/integrations.md).
 
 ## Routes
 
@@ -81,8 +85,8 @@ Pages
 | `/subreddits` | Browse and search communities |
 | `/subreddits/create` | Create a community |
 | `/r/[subreddit]` | Subreddit page — rules, join, post list slot |
-| `/r/[subreddit]/comments/[postId]` | Post page with threaded comments |
-| `/r/[subreddit]/about/edit` | Moderator: settings and rules |
+| `/r/[subreddit]/comments/[postId]` | Post page, threaded comments, AI TL;DR |
+| `/r/[subreddit]/about/edit` | Moderator: banner/icon upload, settings, rules |
 | `/r/[subreddit]/about/banned` | Moderator: ban management |
 | `/r/[subreddit]/about/log` | Moderator: audit trail |
 
@@ -107,15 +111,18 @@ src/
     scores.ts              STUB — owned by TM2
     subreddits.ts          subreddit + subscription + ban service
     comments.ts            threading, sorting, moderation
-    media.ts               S3 image uploads (optional integration)
-    moderation-ai.ts       Bedrock comment triage (optional integration)
+    media.ts               image uploads — S3, or inlined when absent
+    bedrock.ts             shared Bedrock client, model fallback, cooldowns
+    ai.ts                  hot-take drafting + For You ranking (TM2)
+    moderation-ai.ts       advisory comment triage
+    summary.ts             thread TL;DR summaries
     seed.ts                shared development fixtures
 drizzle/
   0000_init.sql            schema for local psql use
 docs/
   integration-contract.md  work division and integration seams
   database.md              Aurora DSQL setup and constraints
-  integrations.md          S3 and Bedrock setup
+  integrations.md          S3 and Bedrock setup, and what has been verified
 ```
 
 `src/app/api/migrate/route.ts` applies the same schema over HTTP for deployed

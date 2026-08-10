@@ -1,5 +1,5 @@
 /**
- * AI-assisted comment triage, backed by the Omega Bedrock integration.
+ * AI-assisted comment triage, backed by Amazon Bedrock.
  *
  * Scoped deliberately narrowly: this ranks a subreddit's recent comments against
  * its own rules so a moderator sees the likely problems first. It **never**
@@ -7,20 +7,12 @@
  * moderation endpoint, because an automated remove on a false positive is a
  * silent censorship bug and there is no signal that it happened.
  *
- * Omega injects `BEDROCK_REGION`; the model id lives in code.
+ * The client, region resolution and model fallback are shared with the other AI
+ * features in `./bedrock`.
  */
 
-import {
-  BedrockRuntimeClient,
-  ConverseCommand,
-} from "@aws-sdk/client-bedrock-runtime";
+import { converse, isBedrockConfigured, stripFences } from "./bedrock";
 import type { Comment, SubredditRule } from "./types";
-
-/**
- * Haiku: triage is a short, high-volume classification over many comments, so
- * latency and cost matter more than deep reasoning.
- */
-const MODEL_ID = "anthropic.claude-3-haiku-20240307-v1:0";
 
 /** Bounded so one request cannot fan out into an unbounded bill. */
 const MAX_COMMENTS = 25;
@@ -38,19 +30,7 @@ export type TriageVerdict = {
 };
 
 export function isModerationAiConfigured(): boolean {
-  return Boolean(process.env.BEDROCK_REGION);
-}
-
-let client: BedrockRuntimeClient | null = null;
-
-function getClient(): BedrockRuntimeClient {
-  if (!process.env.BEDROCK_REGION) {
-    throw new Error(
-      "BEDROCK_REGION is not set. Connect the Omega Bedrock integration.",
-    );
-  }
-  client ??= new BedrockRuntimeClient({ region: process.env.BEDROCK_REGION });
-  return client;
+  return isBedrockConfigured();
 }
 
 const SYSTEM_PROMPT = `You review comments for a discussion forum and help human moderators prioritise their queue.
@@ -68,12 +48,8 @@ Rules for your output:
 - Include every comment id exactly once.
 - Disagreement, strong opinions, and criticism are NOT rule breaches. Only flag content that plausibly breaches a stated rule.`;
 
-/** Strips markdown fences the model may add despite instructions. */
 function parseVerdicts(text: string): TriageVerdict[] {
-  const cleaned = text
-    .trim()
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/, "");
+  const cleaned = stripFences(text);
 
   let parsed: unknown;
   try {
@@ -140,29 +116,24 @@ export async function triageComments(
     )
     .join("\n---\n");
 
-  const response = await getClient().send(
-    new ConverseCommand({
-      modelId: MODEL_ID,
-      system: [{ text: SYSTEM_PROMPT }],
-      messages: [
-        {
-          role: "user",
-          content: [
-            { text: `Community rules:\n${ruleList}\n\nComments:\n${commentList}` },
-          ],
-        },
-      ],
-      // Low temperature: this is a classification, not a creative task.
-      inferenceConfig: { temperature: 0.1, maxTokens: 2000 },
-    }),
-  );
+  const result = await converse({
+    system: SYSTEM_PROMPT,
+    user: `Community rules:\n${ruleList}\n\nComments:\n${commentList}`,
+    // Low temperature: this is a classification, not a creative task.
+    temperature: 0.1,
+    maxTokens: 2000,
+  });
 
-  const text = response.output?.message?.content?.[0]?.text;
-  if (!text) throw new Error("Model returned an empty response");
+  if (!result) {
+    throw new Error(
+      "No Bedrock model was reachable for triage. Check model access in this " +
+        "account and region, then try again.",
+    );
+  }
 
   const submitted = new Set(reviewable.map((comment) => comment.id));
 
-  return parseVerdicts(text)
+  return parseVerdicts(result.text)
     .filter((verdict) => submitted.has(verdict.commentId))
     .sort((a, b) => b.concern - a.concern);
 }

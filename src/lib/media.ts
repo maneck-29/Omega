@@ -1,13 +1,20 @@
 /**
- * Image uploads for subreddit banners and icons, backed by the Omega S3
- * integration.
+ * Image uploads for subreddit banners and icons.
+ *
+ * Two stores, one interface. When the Omega S3 integration is connected the
+ * bytes go to the bucket and the record holds an https URL. When it is not, a
+ * small image is inlined into the record as a `data:` URL instead.
+ *
+ * The inline path exists because uploading was previously impossible without
+ * AWS: the picker was hidden and pasting a URL to an image hosted elsewhere was
+ * the only way to set one. Inlining is not how this should work at scale — it
+ * puts bytes in a row that wants to hold a reference — but it keeps one upload
+ * flow that always works, and the cap below keeps rows small enough that DSQL
+ * never sees an oversized write.
  *
  * Omega injects `BUCKET_NAME` and `BUCKET_REGION` at build and runtime. These
  * are server-side only — they carry no `NEXT_PUBLIC_` prefix, so browser code
  * never sees them, which is why uploads go through a route handler.
- *
- * `isMediaConfigured()` lets callers degrade to the existing URL fields when the
- * integration is absent, so local development works without AWS.
  */
 
 import {
@@ -35,8 +42,28 @@ export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 
 export type MediaKind = "banner" | "icon";
 
+/**
+ * Cap for the inline path. Base64 inflates by a third, so 256 KB of image is
+ * roughly a 350 KB string — small enough to sit in a row and be sent with the
+ * page, and far below the transaction limits that matter in DSQL. Uploads above
+ * this are rejected with a message pointing at the S3 integration rather than
+ * silently producing a row nobody wants to read.
+ */
+export const MAX_INLINE_BYTES = 256 * 1024;
+
+/** Whether uploads are backed by S3 rather than inlined into the record. */
 export function isMediaConfigured(): boolean {
   return Boolean(process.env.BUCKET_NAME);
+}
+
+/**
+ * The largest file the current configuration accepts.
+ *
+ * Callers show this to the user, so it has to reflect which store is active
+ * rather than the theoretical maximum.
+ */
+export function maxUploadBytes(): number {
+  return isMediaConfigured() ? MAX_UPLOAD_BYTES : MAX_INLINE_BYTES;
 }
 
 let client: S3Client | null = null;
@@ -80,24 +107,36 @@ function sniffImageType(bytes: Uint8Array): string | null {
   return null;
 }
 
+function describeLimit(bytes: number): string {
+  return bytes >= 1024 * 1024
+    ? `${Math.floor(bytes / 1024 / 1024)} MB`
+    : `${Math.floor(bytes / 1024)} KB`;
+}
+
 /**
- * Validates and stores an image, returning the key and public URL.
+ * Validates and stores an image, returning a key and a URL.
  *
- * Keys are prefixed per subreddit so a lifecycle rule or bulk delete can target
- * one community, and carry a UUID so re-uploads never collide or serve a stale
- * cached object.
+ * With S3 connected, keys are prefixed per subreddit so a lifecycle rule or bulk
+ * delete can target one community, and carry a UUID so re-uploads never collide
+ * or serve a stale cached object. Without it, the image is returned as a `data:`
+ * URL and `key` is empty — there is no object to later delete.
  */
 export async function uploadSubredditImage(
   subredditId: SubredditId,
   kind: MediaKind,
   file: File,
 ): Promise<{ key: string; url: string }> {
+  const limit = maxUploadBytes();
+
   if (file.size === 0) {
     throw badRequest("File is empty", "empty_file");
   }
-  if (file.size > MAX_UPLOAD_BYTES) {
+  if (file.size > limit) {
     throw badRequest(
-      `File must be at most ${Math.floor(MAX_UPLOAD_BYTES / 1024 / 1024)} MB`,
+      isMediaConfigured()
+        ? `File must be at most ${describeLimit(limit)}`
+        : `File must be at most ${describeLimit(limit)}. Connect the Omega S3 ` +
+            `integration to upload larger images.`,
       "file_too_large",
     );
   }
@@ -123,6 +162,12 @@ export async function uploadSubredditImage(
       `File contents (${sniffed}) do not match the declared type (${declared})`,
       "type_mismatch",
     );
+  }
+
+  // No bucket: inline the bytes so the upload still succeeds.
+  if (!isMediaConfigured()) {
+    const base64 = Buffer.from(bytes).toString("base64");
+    return { key: "", url: `data:${sniffed};base64,${base64}` };
   }
 
   const extension = ALLOWED_TYPES.get(declared)!;
