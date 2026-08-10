@@ -14,6 +14,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import SignOutButton from "./sign-out-button";
 
 /** The feed order the ‹ › arrows cycle through. */
 const FEEDS = [
@@ -113,8 +114,10 @@ export default function AppHeader() {
           </div>
         )}
 
-        {/* Balances the logo so the switcher stays optically centred. */}
-        {showSwitcher && <div aria-hidden className="w-8 shrink-0 sm:w-24" />}
+        {/* Sits opposite the logo, which also keeps the switcher centred. */}
+        <div className="ml-auto shrink-0">
+          <SignOutButton />
+        </div>
       </div>
     </header>
   );
