@@ -1,60 +1,96 @@
-import AddItemForm from "./add-item-form";
-import { listItems } from "@/lib/items";
+import Link from "next/link";
+import { getCurrentUser } from "@/lib/auth";
+import PostListSlot from "@/components/post-list-slot";
+import { listSubreddits, listSubscribedSubreddits } from "@/lib/subreddits";
+import { ensureSeeded } from "@/lib/seed";
 
-// Read on every request so newly created items show up after router.refresh().
 export const dynamic = "force-dynamic";
 
-export default function Home() {
-  const items = listItems();
+export default async function Home() {
+  await ensureSeeded();
+
+  const user = await getCurrentUser();
+  const [{ subreddits }, subscribed] = await Promise.all([
+    listSubreddits({ sort: "popular", limit: 10 }),
+    user ? listSubscribedSubreddits(user.id) : Promise.resolve([]),
+  ]);
 
   return (
-    <div className="flex flex-1 flex-col items-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex w-full max-w-2xl flex-1 flex-col gap-10 px-6 py-20">
-        <header className="flex flex-col gap-2">
-          <h1 className="text-3xl font-semibold tracking-tight">Hot Takes</h1>
-          <p className="text-zinc-600 dark:text-zinc-400">
-            Next.js App Router with API route handlers and Tailwind CSS.
+    <div className="mx-auto flex w-full max-w-5xl flex-1 gap-8 px-6 py-10">
+      <main className="flex flex-1 flex-col gap-6">
+        <header className="flex flex-col gap-1">
+          <h1 className="text-2xl font-semibold tracking-tight">Hot Takes</h1>
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            Home feed — posts from subreddits you have joined.
           </p>
         </header>
-
-        <section className="flex flex-col gap-4">
-          <h2 className="text-sm font-medium uppercase tracking-wide text-zinc-500">
-            Items
-          </h2>
-          <AddItemForm />
-          <ul className="flex flex-col divide-y divide-black/[.06] rounded-lg border border-black/[.08] dark:divide-white/[.08] dark:border-white/[.12]">
-            {items.length === 0 ? (
-              <li className="px-4 py-3 text-sm text-zinc-500">No items yet.</li>
-            ) : (
-              items.map((item) => (
-                <li
-                  key={item.id}
-                  className="flex items-center justify-between gap-4 px-4 py-3"
-                >
-                  <span className="text-sm">{item.name}</span>
-                  <time
-                    dateTime={item.createdAt}
-                    className="font-mono text-xs text-zinc-500"
-                  >
-                    {item.createdAt.slice(0, 10)}
-                  </time>
-                </li>
-              ))
-            )}
-          </ul>
-        </section>
-
-        <section className="flex flex-col gap-3">
-          <h2 className="text-sm font-medium uppercase tracking-wide text-zinc-500">
-            API
-          </h2>
-          <ul className="flex flex-col gap-2 font-mono text-sm text-zinc-600 dark:text-zinc-400">
-            <li>GET /api/health</li>
-            <li>GET /api/items</li>
-            <li>POST /api/items</li>
-          </ul>
-        </section>
+        <PostListSlot />
       </main>
+
+      <aside className="hidden w-64 shrink-0 flex-col gap-6 lg:flex">
+        <section className="flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              Your communities
+            </h2>
+            <Link
+              href="/subreddits/create"
+              className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+            >
+              Create
+            </Link>
+          </div>
+          {subscribed.length === 0 ? (
+            <p className="text-xs text-zinc-500">Nothing joined yet.</p>
+          ) : (
+            <ul className="flex flex-col gap-1">
+              {subscribed.map((subreddit) => (
+                <li key={subreddit.id}>
+                  <Link
+                    href={`/r/${subreddit.slug}`}
+                    className="text-sm hover:underline"
+                  >
+                    r/{subreddit.name}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              Popular
+            </h2>
+            <Link
+              href="/subreddits"
+              className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+            >
+              Browse
+            </Link>
+          </div>
+          <ul className="flex flex-col gap-1">
+            {subreddits.map((subreddit) => (
+              <li key={subreddit.id} className="flex justify-between gap-2">
+                <Link
+                  href={`/r/${subreddit.slug}`}
+                  className="truncate text-sm hover:underline"
+                >
+                  r/{subreddit.name}
+                </Link>
+                <span className="shrink-0 text-xs text-zinc-500">
+                  {subreddit.subscriberCount}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <p className="text-xs text-zinc-400">
+          Signed in as {user?.username ?? "nobody"} (stub auth — TM1)
+        </p>
+      </aside>
     </div>
   );
 }
