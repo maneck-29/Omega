@@ -4,8 +4,8 @@ import { listItems } from "@/lib/items";
 // Read on every request so newly created items show up after router.refresh().
 export const dynamic = "force-dynamic";
 
-export default function Home() {
-  const items = listItems();
+export default async function Home() {
+  const items = await listItems();
 
   return (
     <div className="flex flex-1 flex-col items-center bg-zinc-50 font-sans dark:bg-black">

@@ -1,25 +1,33 @@
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import {
+  DynamoDBDocumentClient,
+  PutCommand,
+  ScanCommand,
+} from "@aws-sdk/lib-dynamodb";
+
 export type Item = {
   id: string;
   name: string;
   createdAt: string;
 };
 
-// In-memory store. Swap for a real database when one is wired up; module state
-// does not survive a server restart and is not shared across instances.
-const items: Item[] = [
-  { id: "1", name: "First item", createdAt: new Date(0).toISOString() },
-];
+const client = new DynamoDBClient({
+  region: process.env.DYNAMODB_REGION || "us-east-2",
+});
+const docClient = DynamoDBDocumentClient.from(client);
+const TABLE = process.env.DYNAMODB_TABLE || "hot-takes-items";
 
-export function listItems(): Item[] {
-  return items;
+export async function listItems(): Promise<Item[]> {
+  const result = await docClient.send(new ScanCommand({ TableName: TABLE }));
+  return (result.Items as Item[]) || [];
 }
 
-export function createItem(name: string): Item {
+export async function createItem(name: string): Promise<Item> {
   const item: Item = {
     id: crypto.randomUUID(),
     name,
     createdAt: new Date().toISOString(),
   };
-  items.push(item);
+  await docClient.send(new PutCommand({ TableName: TABLE, Item: item }));
   return item;
 }

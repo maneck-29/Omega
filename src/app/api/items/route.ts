@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createItem, listItems } from "@/lib/items";
 
 export async function GET() {
-  return NextResponse.json({ items: listItems() });
+  return NextResponse.json({ items: await listItems() });
 }
 
 export async function POST(request: Request) {
@@ -21,6 +21,6 @@ export async function POST(request: Request) {
     );
   }
 
-  const item = createItem(name.trim());
+  const item = await createItem(name.trim());
   return NextResponse.json({ item }, { status: 201 });
 }
