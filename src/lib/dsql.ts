@@ -39,7 +39,14 @@ function createPool(): AuroraDSQLPool {
     user: process.env.PGUSER ?? "admin",
     database: process.env.PGDATABASE ?? "postgres",
     port: Number(process.env.PGPORT ?? 5432),
-    region: process.env.AWS_REGION ?? process.env.PGREGION,
+    // `DSQL_REGION` is the cluster's region, published by the Omega
+    // integration. It must win over `AWS_REGION`, which the Lambda runtime sets
+    // to the region the function runs in — the IAM auth token is signed per
+    // region, so a cross-region deployment would sign for the wrong one.
+    region:
+      process.env.DSQL_REGION ??
+      process.env.PGREGION ??
+      process.env.AWS_REGION,
     ssl: { rejectUnauthorized: true },
   });
 }

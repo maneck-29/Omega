@@ -3,12 +3,14 @@
  */
 
 import { getRepository } from "./db";
-import { forbidden, notFound } from "./errors";
+import { badRequest, forbidden, notFound } from "./errors";
 import { assertModerator } from "./permissions";
 import type {
+  ModLogEntry,
   Subreddit,
   SubredditBan,
   SubredditId,
+  SubredditModerator,
   SubredditRule,
   UserId,
 } from "./types";
@@ -151,6 +153,48 @@ export async function addRule(
   );
 }
 
+/**
+ * Confirms a rule belongs to the given subreddit before it is modified.
+ *
+ * Without this, a moderator of one subreddit could edit or delete another
+ * subreddit's rule by id — the moderator check alone only proves they moderate
+ * *somewhere*.
+ */
+async function assertRuleBelongsTo(
+  subredditId: SubredditId,
+  ruleId: string,
+): Promise<void> {
+  const rules = await getRepository().listRules(subredditId);
+  if (!rules.some((rule) => rule.id === ruleId)) {
+    throw notFound("Rule not found in this subreddit", "rule_not_found");
+  }
+}
+
+export async function updateRule(
+  slug: string,
+  actorId: UserId,
+  ruleId: string,
+  patch: { title?: unknown; description?: unknown },
+): Promise<SubredditRule> {
+  const subreddit = await getSubredditBySlugOrThrow(slug);
+  await assertModerator(actorId, subreddit.id);
+  await assertRuleBelongsTo(subreddit.id, ruleId);
+
+  return getRepository().updateRule(ruleId, {
+    ...(patch.title !== undefined && {
+      title: validateText(patch.title, "Rule title", RULE_TITLE_MAX),
+    }),
+    ...(patch.description !== undefined && {
+      description: validateText(
+        patch.description,
+        "Rule description",
+        RULE_DESCRIPTION_MAX,
+        { required: false },
+      ),
+    }),
+  });
+}
+
 export async function deleteRule(
   slug: string,
   actorId: UserId,
@@ -158,7 +202,38 @@ export async function deleteRule(
 ): Promise<void> {
   const subreddit = await getSubredditBySlugOrThrow(slug);
   await assertModerator(actorId, subreddit.id);
+  await assertRuleBelongsTo(subreddit.id, ruleId);
   await getRepository().deleteRule(ruleId);
+}
+
+/**
+ * Persists a new rule ordering. `ruleIds` must be the complete set for the
+ * subreddit; a partial list would leave positions inconsistent.
+ */
+export async function reorderRules(
+  slug: string,
+  actorId: UserId,
+  ruleIds: string[],
+): Promise<SubredditRule[]> {
+  const repo = getRepository();
+  const subreddit = await getSubredditBySlugOrThrow(slug);
+  await assertModerator(actorId, subreddit.id);
+
+  const existing = await repo.listRules(subreddit.id);
+  const existingIds = new Set(existing.map((rule) => rule.id));
+
+  if (
+    ruleIds.length !== existing.length ||
+    !ruleIds.every((id) => existingIds.has(id))
+  ) {
+    throw badRequest(
+      "ruleIds must contain every rule in this subreddit exactly once",
+      "incomplete_rule_order",
+    );
+  }
+
+  await repo.reorderRules(subreddit.id, ruleIds);
+  return repo.listRules(subreddit.id);
 }
 
 // --- Subscriptions --------------------------------------------------------
@@ -307,4 +382,35 @@ export async function unbanUser(
     targetId: userId,
     reason: null,
   });
+}
+
+/** Active bans for the moderation UI. Moderator only. */
+export async function listBans(
+  slug: string,
+  actorId: UserId,
+): Promise<SubredditBan[]> {
+  const subreddit = await getSubredditBySlugOrThrow(slug);
+  await assertModerator(actorId, subreddit.id);
+  return getRepository().listBans(subreddit.id);
+}
+
+/**
+ * Moderation audit trail. Moderator only — it exposes who removed what, which
+ * is not public information.
+ */
+export async function listModLog(
+  slug: string,
+  actorId: UserId,
+  limit = 50,
+): Promise<ModLogEntry[]> {
+  const subreddit = await getSubredditBySlugOrThrow(slug);
+  await assertModerator(actorId, subreddit.id);
+  return getRepository().listModLog(subreddit.id, limit);
+}
+
+export async function listModerators(
+  slug: string,
+): Promise<SubredditModerator[]> {
+  const subreddit = await getSubredditBySlugOrThrow(slug);
+  return getRepository().listModerators(subreddit.id);
 }

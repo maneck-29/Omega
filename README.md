@@ -76,6 +76,9 @@ Pages
 | `/subreddits/create` | Create a community |
 | `/r/[subreddit]` | Subreddit page — rules, join, post list slot |
 | `/r/[subreddit]/comments/[postId]` | Post page with threaded comments |
+| `/r/[subreddit]/about/edit` | Moderator: settings and rules |
+| `/r/[subreddit]/about/banned` | Moderator: ban management |
+| `/r/[subreddit]/about/log` | Moderator: audit trail |
 
 API — see [docs/integration-contract.md](docs/integration-contract.md) for the
 full table.
