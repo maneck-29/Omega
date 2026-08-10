@@ -254,7 +254,7 @@ export default function Composer({
           {subreddits.length === 0 && <option value="">No communities yet</option>}
           {subreddits.map((option) => (
             <option key={option.id} value={option.slug}>
-              r/{option.name}
+              {option.name}
             </option>
           ))}
         </select>

@@ -30,7 +30,7 @@ function BrowseIcon() {
   );
 }
 
-function CreateIcon() {
+function ProfileIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
       <path d="M12 4a4 4 0 110 8 4 4 0 010-8zm0 10c4.4 0 8 2.2 8 4.5V21H4v-2.5C4 16.2 7.6 14 12 14z" />
@@ -41,7 +41,7 @@ function CreateIcon() {
 const TABS = [
   { href: "/", label: "Home", icon: HomeIcon },
   { href: "/subreddits", label: "Browse", icon: BrowseIcon },
-  { href: "/subreddits/create", label: "Community", icon: CreateIcon },
+  { href: "/me", label: "You", icon: ProfileIcon },
 ];
 
 export default function BottomNav() {

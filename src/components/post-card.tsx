@@ -136,7 +136,7 @@ export default function PostCard({
                 href={`/r/${subreddit.slug}`}
                 className="font-semibold text-zinc-800 hover:underline dark:text-zinc-200"
               >
-                r/{subreddit.name}
+                {subreddit.name}
               </Link>
               <span aria-hidden> · </span>
             </>

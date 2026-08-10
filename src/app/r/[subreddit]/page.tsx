@@ -52,7 +52,7 @@ export default async function SubredditPage({
           <header className="flex flex-wrap items-start justify-between gap-4">
             <div className="flex flex-col gap-1">
               <h1 className="text-2xl font-semibold tracking-tight">
-                r/{view.name}
+                {view.name}
               </h1>
               <p className="max-w-prose text-sm text-zinc-600 dark:text-zinc-400">
                 {view.description || "No description yet."}

@@ -70,7 +70,7 @@ export default async function PostPage({
     <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-6 py-8">
       <nav className="text-xs text-zinc-500">
         <Link href={`/r/${view.slug}`} className="hover:underline">
-          r/{view.name}
+          {view.name}
         </Link>
       </nav>
 
@@ -106,7 +106,7 @@ export default async function PostPage({
 
       {view.isBanned && (
         <p className="rounded-md border border-red-500/30 bg-red-500/[.08] px-3 py-2 text-sm text-red-700 dark:text-red-400">
-          You are banned from r/{view.name} and cannot comment.
+          You are banned from {view.name} and cannot comment.
         </p>
       )}
 

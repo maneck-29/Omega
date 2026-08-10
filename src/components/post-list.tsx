@@ -15,21 +15,13 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { PostSort, PostType, PostView, PostWindow } from "@/lib/types";
+import { useSearchParams } from "next/navigation";
+import type { PostType, PostView, PostWindow } from "@/lib/types";
+import { parseFeed } from "./app-header";
 import { POST_CREATED_EVENT } from "./events";
 import PostCard from "./post-card";
 
 const PAGE_SIZE = 20;
-
-type FeedMode = PostSort | "foryou";
-
-const SORTS: Array<{ value: FeedMode; label: string }> = [
-  { value: "hot", label: "Hot" },
-  { value: "new", label: "New" },
-  { value: "top", label: "Top" },
-  { value: "controversial", label: "Controversial" },
-  { value: "foryou", label: "For You" },
-];
 
 const TYPES: Array<{ value: PostType | "all"; label: string }> = [
   { value: "all", label: "All" },
@@ -47,15 +39,19 @@ const WINDOWS: Array<{ value: PostWindow; label: string }> = [
 export default function PostList({
   subredditSlug,
   subscribedOnly = false,
-  initialSort = "hot",
+  authorId,
 }: {
-  /** Restrict to one subreddit. Omit for a cross-subreddit feed. */
+  /** Restrict to one community. Omit for a cross-community feed. */
   subredditSlug?: string;
-  /** Home feed: only subreddits the viewer has joined. */
+  /** Home feed: only communities the viewer has joined. */
   subscribedOnly?: boolean;
-  initialSort?: FeedMode;
+  /** Restrict to one author, for a profile page. */
+  authorId?: string;
 }) {
-  const [sort, setSort] = useState<FeedMode>(initialSort);
+  // The feed lives in the URL, chosen by the header's ‹ › switcher.
+  const searchParams = useSearchParams();
+  const sort = parseFeed(searchParams.get("feed"));
+
   const [typeFilter, setTypeFilter] = useState<PostType | "all">("all");
   const [window_, setWindow] = useState<PostWindow>("all");
   const [search, setSearch] = useState("");
@@ -90,6 +86,7 @@ export default function PostList({
 
       if (subredditSlug) params.set("subreddit", subredditSlug);
       if (subscribedOnly) params.set("feed", "subscribed");
+      if (authorId) params.set("author", authorId);
 
       if (sort !== "foryou") {
         if (typeFilter !== "all") params.set("type", typeFilter);
@@ -99,7 +96,7 @@ export default function PostList({
 
       return `/api/posts?${params.toString()}`;
     },
-    [sort, subredditSlug, subscribedOnly, typeFilter, debouncedSearch, window_],
+    [sort, subredditSlug, subscribedOnly, authorId, typeFilter, debouncedSearch, window_],
   );
 
   // Reload from the top whenever the query changes. All state updates happen
@@ -206,30 +203,12 @@ export default function PostList({
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="no-scrollbar flex gap-1.5 overflow-x-auto">
-          {SORTS.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              onClick={() => setSort(option.value)}
-              aria-pressed={sort === option.value}
-              className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
-                sort === option.value
-                  ? "bg-orange-600 text-white"
-                  : "bg-black/5 text-zinc-600 hover:bg-black/10 dark:bg-white/10 dark:text-zinc-300"
-              }`}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-
         <button
           type="button"
           onClick={() => setShowSearch((value) => !value)}
           aria-label={showSearch ? "Close search" : "Search posts"}
           aria-expanded={showSearch}
-          className="ml-auto flex h-7 w-7 items-center justify-center rounded-full text-zinc-500 hover:bg-black/5 dark:hover:bg-white/10"
+          className="flex h-7 w-7 items-center justify-center rounded-full text-zinc-500 hover:bg-black/5 dark:hover:bg-white/10"
         >
           <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
             <path d="M10.5 3a7.5 7.5 0 015.9 12.1l4.3 4.3-1.4 1.4-4.3-4.3A7.5 7.5 0 1110.5 3zm0 2a5.5 5.5 0 100 11 5.5 5.5 0 000-11z" />

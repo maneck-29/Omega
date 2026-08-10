@@ -18,12 +18,6 @@ export default async function Home() {
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-1 gap-8 px-6 py-10">
       <main className="flex flex-1 flex-col gap-6">
-        <header className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Hot Takes</h1>
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            Home feed — posts from subreddits you have joined.
-          </p>
-        </header>
         <PostListSlot subscribedOnly={Boolean(user)} />
       </main>
 
@@ -50,7 +44,7 @@ export default async function Home() {
                     href={`/r/${subreddit.slug}`}
                     className="text-sm hover:underline"
                   >
-                    r/{subreddit.name}
+                    {subreddit.name}
                   </Link>
                 </li>
               ))}
@@ -77,7 +71,7 @@ export default async function Home() {
                   href={`/r/${subreddit.slug}`}
                   className="truncate text-sm hover:underline"
                 >
-                  r/{subreddit.name}
+                  {subreddit.name}
                 </Link>
                 <span className="shrink-0 text-xs text-zinc-500">
                   {subreddit.subscriberCount}
