@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import UserPostList from "./user-post-list";
-import { DEV_USERS, getCurrentUser } from "@/lib/auth";
+import { findUserByUsername, getCurrentUser } from "@/lib/auth";
 import { getRepository } from "@/lib/db";
 import { listPostViews } from "@/lib/posts";
 import { ensureSeeded } from "@/lib/seed";
@@ -21,9 +21,8 @@ export default async function UserProfilePage({
   const { tab: activeTab } = await searchParams;
   const tab = activeTab || "posts";
 
-  const user = DEV_USERS.find(
-    (u) => u.username.toLowerCase() === username.toLowerCase(),
-  );
+  // Resolves fixture users and the signed-in account alike.
+  const user = findUserByUsername(username);
   if (!user) notFound();
 
   const viewer = await getCurrentUser();

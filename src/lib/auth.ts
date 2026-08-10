@@ -17,6 +17,7 @@ import { cookies } from "next/headers";
 import {
   readSessionValue,
   SESSION_COOKIE,
+  sessionAccount,
   sessionUsername,
 } from "./session";
 import type { PublicUser, UserId } from "./types";
@@ -61,6 +62,28 @@ export async function getCurrentUser(): Promise<PublicUser | null> {
 export async function isSignedIn(): Promise<boolean> {
   const store = await cookies();
   return (await readSessionValue(store.get(SESSION_COOKIE)?.value)) !== null;
+}
+
+/**
+ * Resolve a username to a user.
+ *
+ * Must be used instead of searching `DEV_USERS` directly, because the name a
+ * visitor signs in with need not be one of the fixture usernames.
+ * `getCurrentUser()` reports the signed-in name, so `/me` links to `/u/<that
+ * name>` — and looking that up against the fixtures alone returns nothing, which
+ * made the signed-in user's own profile a 404.
+ */
+export function findUserByUsername(username: string): PublicUser | null {
+  const wanted = username.trim().toLowerCase();
+
+  // The sign-in account, presented as the fixture user it maps onto.
+  const account = sessionAccount();
+  if (wanted === account.username.toLowerCase()) {
+    const base = DEV_USERS.find((u) => u.id === account.userId);
+    if (base) return { ...base, username: account.username };
+  }
+
+  return DEV_USERS.find((u) => u.username.toLowerCase() === wanted) ?? null;
 }
 
 /** Throwing variant for routes that require a session. */
