@@ -97,6 +97,11 @@ Implementation notes in `src/lib/media.ts`:
   the `subreddits/` prefix and sends `X-Content-Type-Options: nosniff`.
   `keyFromUrl` still recognises the old S3-endpoint form so images uploaded before
   this change stay deletable.
+- **Serving through the app also composes with the sign-in gate.** `src/proxy.ts`
+  requires a session for everything outside a small public list, and a relative
+  `/api/media/...` URL carries the session cookie automatically. An absolute S3
+  URL never could, so an authenticated-only bucket would have needed presigned
+  GETs on every render.
 - **Replacement deletion is best-effort.** A leaked object beats failing an
   upload that already succeeded.
 
