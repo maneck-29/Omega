@@ -33,8 +33,20 @@ let seeding: Promise<void> | null = null;
 async function seed(): Promise<void> {
   const repo = getRepository();
 
-  // Cheap idempotency guard for the in-memory store.
-  if ((await repo.countSubreddits()) > 0) return;
+  // Subreddits, subscriptions and comment threads are seeded only when the
+  // board is empty. Post fixtures are handled separately below, because they
+  // must still appear on a database that was seeded before posts existed.
+  if ((await repo.countSubreddits()) === 0) {
+    await seedSubredditsAndComments();
+  }
+
+  // Always attempted; guards on its own emptiness and resolves subreddits by
+  // slug, so it works whether or not the block above just ran.
+  await seedPosts();
+}
+
+async function seedSubredditsAndComments(): Promise<void> {
+  const repo = getRepository();
 
   const [alice, bob, carol] = DEV_USERS;
 
@@ -115,11 +127,6 @@ async function seed(): Promise<void> {
     body: "Server components changed how I structure data loading.",
   });
 
-  await seedPosts({
-    typescript: typescript.id,
-    webdev: webdev.id,
-    users: [alice.id, bob.id, carol.id],
-  });
 }
 
 /**
@@ -133,19 +140,33 @@ async function seed(): Promise<void> {
  * casting a vote recomputes tallies from the votes table — counters written by
  * hand would be overwritten by the first real vote.
  */
-async function seedPosts(context: {
-  typescript: string;
-  webdev: string;
-  users: string[];
-}): Promise<void> {
+async function seedPosts(): Promise<void> {
   const repo = getRepository();
 
-  // Idempotency: the outer seed() only runs once per process, but a shared
-  // database may already be populated by another instance.
+  // Idempotency: seed() runs once per process, but a shared database may already
+  // be populated by another instance or an earlier deployment.
   const existing = await repo.listPosts({ limit: 1 });
   if (existing.length > 0) return;
 
-  const [alice, bob, carol] = context.users;
+  /*
+   * Resolved by slug rather than passed in, so post fixtures also land on a
+   * database that was seeded before the posts table existed. Previously this ran
+   * inside seed()'s "already seeded" early return, which meant an existing
+   * deployment never got them.
+   */
+  const [typescriptSub, webdevSub] = await Promise.all([
+    repo.getSubredditBySlug("typescript"),
+    repo.getSubredditBySlug("webdev"),
+  ]);
+
+  if (!typescriptSub || !webdevSub) return;
+
+  const context = {
+    typescript: typescriptSub.id,
+    webdev: webdevSub.id,
+  };
+
+  const [alice, bob, carol] = DEV_USERS.map((user) => user.id);
 
   const hoursAgo = (hours: number) =>
     new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
