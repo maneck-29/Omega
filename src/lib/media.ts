@@ -19,6 +19,7 @@
 
 import {
   DeleteObjectCommand,
+  GetObjectCommand,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -188,15 +189,49 @@ export async function uploadSubredditImage(
 }
 
 /**
- * Public URL for a stored object.
+ * URL that serves a stored object.
  *
- * Uses the bucket's regional endpoint. If the bucket is private, this becomes a
- * CloudFront domain or a presigned GET instead — hence the single accessor.
+ * Omega provisions buckets with all four public-access blocks enabled, so the
+ * S3 regional endpoint returns 403 to a browser. Rather than weaken those
+ * protections — they are why an uploaded file cannot become a public host for
+ * anything — objects are served back through this app, which reads them with the
+ * server's credentials.
+ *
+ * The key is carried in the path, so the route needs no lookup and the URL stays
+ * stable and cacheable. Anyone who can see the community can see its banner,
+ * which is already true of the page it sits on.
  */
 export function publicUrl(key: string): string {
-  const bucket = process.env.BUCKET_NAME;
-  const region = process.env.BUCKET_REGION;
-  return `https://${bucket}.s3.${region}.amazonaws.com/${key}`;
+  // Each segment is encoded separately so the slashes stay real path separators.
+  const encoded = key.split("/").map(encodeURIComponent).join("/");
+  return `/api/media/${encoded}`;
+}
+
+/** Reads an object back for the media route. */
+export async function getObject(
+  key: string,
+): Promise<{ body: Uint8Array; contentType: string } | null> {
+  try {
+    const response = await getClient().send(
+      new GetObjectCommand({
+        Bucket: process.env.BUCKET_NAME,
+        Key: key,
+      }),
+    );
+
+    const body = await response.Body?.transformToByteArray();
+    if (!body) return null;
+
+    return {
+      body,
+      contentType: response.ContentType ?? "application/octet-stream",
+    };
+  } catch (cause) {
+    // A missing key is a 404, not a server error.
+    const name = cause instanceof Error ? cause.name : "";
+    if (name === "NoSuchKey" || name === "NotFound") return null;
+    throw cause;
+  }
 }
 
 /** Best-effort cleanup when an image is replaced or a subreddit is reset. */
@@ -209,20 +244,34 @@ export async function deleteObject(key: string): Promise<void> {
   );
 }
 
+/** Path prefix produced by `publicUrl`. */
+const MEDIA_ROUTE = "/api/media/";
+
 /**
  * Extracts the object key from a URL this app produced.
  *
- * Returns null for externally hosted images, so replacing one never attempts a
- * delete against a bucket that does not own it.
+ * Returns null for externally hosted images and for inlined `data:` URLs, so
+ * replacing one never attempts a delete against a bucket that does not own it.
+ *
+ * Two shapes are recognised. The current one is the relative `/api/media/<key>`
+ * path; the S3 regional endpoint is still accepted because rows written before
+ * images were served through the app hold that form, and those objects must
+ * remain deletable.
  */
 export function keyFromUrl(url: string | null): string | null {
   if (!url || !process.env.BUCKET_NAME) return null;
 
+  const validate = (key: string) =>
+    key.startsWith("subreddits/") ? key : null;
+
+  if (url.startsWith(MEDIA_ROUTE)) {
+    return validate(decodeURIComponent(url.slice(MEDIA_ROUTE.length)));
+  }
+
   try {
     const parsed = new URL(url);
     if (!parsed.hostname.startsWith(`${process.env.BUCKET_NAME}.`)) return null;
-    const key = parsed.pathname.replace(/^\//, "");
-    return key.startsWith("subreddits/") ? key : null;
+    return validate(decodeURIComponent(parsed.pathname.replace(/^\//, "")));
   } catch {
     return null;
   }

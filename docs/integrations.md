@@ -89,6 +89,14 @@ Implementation notes in `src/lib/media.ts`:
   lifecycle rules or bulk deletes can target one subreddit, and UUID-suffixed so
   a replacement never collides or serves a stale cached object. That also makes
   every object immutable, hence the one-year `Cache-Control`.
+- **Objects are served through `GET /api/media/<key>`, not from S3 directly.**
+  Omega provisions buckets with all four public-access blocks enabled, so the S3
+  regional endpoint returns 403 to a browser. Reading them back through the app
+  keeps the bucket private instead of weakening protections that exist to stop an
+  upload becoming a public host for arbitrary content. The route confines keys to
+  the `subreddits/` prefix and sends `X-Content-Type-Options: nosniff`.
+  `keyFromUrl` still recognises the old S3-endpoint form so images uploaded before
+  this change stay deletable.
 - **Replacement deletion is best-effort.** A leaked object beats failing an
   upload that already succeeded.
 
@@ -214,4 +222,21 @@ Degradation with Bedrock unreachable (expired credentials):
 - Failures were classified transient, so **no** cooldown was set and the next
   call with fresh credentials succeeded immediately
 
-Not yet verified: a real S3 upload. Needs an account where Omega can provision.
+Deployed to preview against **real** integrations in sandbox `541943222423`
+(DSQL `us-east-2`, Bedrock `us-east-2`, S3 `us-east-2`):
+
+- `GET /api/health` reports `storage: "dsql"`, `bedrock.configured: true`,
+  `media.configured: true` with the provisioned bucket name
+- Thread TL;DR returned `source: "bedrock"` on a real thread, `basedOn: 4` from 5
+  rows — the tombstone excluded, exactly as locally
+- A 3-comment thread returned the "needs at least 4 comments" note rather than a
+  summary, so the gate holds in the deployed environment too
+- A real S3 upload succeeded end to end: 201, object written under
+  `subreddits/<id>/icon-<uuid>.png`, and the URL stored and rendered
+- Non-moderator upload → 403 against real DSQL moderator rows
+
+That last upload is what surfaced the private-bucket problem: the object stored
+and rendered fine but the S3 URL 403'd in a browser, because Omega blocks public
+access. Hence `/api/media/<key>`. `BEDROCK_REGION` is `us-east-2`, where Claude
+Haiku is unavailable but Nova Micro — first in the candidate list — is, so the
+first attempt succeeds with no wasted calls.
