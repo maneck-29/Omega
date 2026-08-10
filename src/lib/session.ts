@@ -138,3 +138,14 @@ export const sessionCookieOptions = {
 export function sessionUsername(): string {
   return demoAccount().username;
 }
+
+/**
+ * The sign-in account's username and the fixture user it maps onto.
+ *
+ * Exposed so username lookups can resolve the signed-in account as well as the
+ * fixture users. Deliberately excludes the password.
+ */
+export function sessionAccount(): { username: string; userId: string } {
+  const { username, userId } = demoAccount();
+  return { username, userId };
+}
