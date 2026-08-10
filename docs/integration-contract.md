@@ -12,7 +12,11 @@ integration points below should be reviewed by whoever owns the other side.
 
 ## Status
 
-TM3's slice is implemented and working end to end against an in-memory store.
+TM3's slice is implemented and verified end to end. Aurora DSQL is wired up
+behind the repository interface; behaviour was exercised against the in-memory
+implementation, which reproduces the same semantics (see
+[database.md](database.md)).
+
 Two stubs stand in for other people's work and are marked for replacement:
 
 - `src/lib/auth.ts` — TM1 replaces `getCurrentUser()` and `getUsersByIds()`
@@ -20,16 +24,28 @@ Two stubs stand in for other people's work and are marked for replacement:
 
 ## Storage
 
-No database has been chosen yet, so everything above the storage layer talks to
-the `Repository` interface in `src/lib/repository.ts`. `memoryRepository` backs
-it for now; state resets on restart and is not shared across processes.
+**Amazon Aurora DSQL** (serverless distributed PostgreSQL) via Drizzle. See
+[database.md](database.md) for setup, the migration, and the DSQL-specific
+constraints that shaped the schema.
 
-Adopting a real database means writing one new implementation of that interface
-and changing the single line in `src/lib/db.ts`. No service, route, or page
-imports a concrete repository.
+Everything above storage talks to the `Repository` interface in
+`src/lib/repository.ts`; no service, route, or page imports a concrete
+repository. Two implementations satisfy it:
 
-`src/lib/repository.ts` doubles as the schema spec — method signatures name the
-tables, keys, and constraints a real implementation must reproduce:
+- `dsql-repository.ts` — used when `PGHOST` is set
+- `memory-repository.ts` — local development with no AWS credentials
+
+Two DSQL constraints reach into everyone's code:
+
+- **No foreign keys.** Referential integrity is enforced in the service layer,
+  which conveniently means no team's table has to exist before another team can
+  write rows that reference it.
+- **Optimistic concurrency.** Conflicts surface at commit and the transaction is
+  retried, so anything inside `withTransaction()` must be idempotent, and
+  counters must be updated relatively rather than read-then-written.
+
+`src/lib/repository.ts` also documents the storage contract — method signatures
+name the tables, keys, and constraints an implementation must reproduce:
 
 - `subreddits.slug` — lowercased name, case-insensitive UNIQUE, the lookup key
 - `subreddit_subscriptions` — composite PK `(user_id, subreddit_id)`, so a
@@ -174,7 +190,11 @@ real posts to the existing threads.
 
 ## Open decisions
 
-1. Database and ORM — the only thing blocking a real `Repository`
+1. Provision the DSQL cluster and apply `drizzle/0000_init.sql`; until then
+   `PGHOST` is unset and local development uses the in-memory store
 2. Whether TM1 ships sessions or JWTs (does not affect the `getCurrentUser()`
    signature)
 3. Whether the comment count lives on `posts` (TM2) or stays computed (TM3)
+4. Whether TM1's `users` and TM2's `posts` tables join `drizzle/0000_init.sql` or
+   get their own migrations — DSQL allows one DDL statement per transaction, so
+   separate files are simpler to apply

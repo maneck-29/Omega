@@ -1,0 +1,12 @@
+{
+  "name": "hot-takes",
+  "env": {
+    "production": {},
+    "preview": {}
+  },
+  "deploy": {
+    "install": "npm ci",
+    "build": "npx @omega/opennext-adapter",
+    "output_directory": ".omega"
+  }
+}

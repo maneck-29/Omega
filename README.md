@@ -39,13 +39,20 @@ TM3's slice is implemented. TM1's and TM2's are stubbed at the boundary
 
 ## Storage
 
-No database has been chosen yet. Everything above the storage layer talks to the
-`Repository` interface in `src/lib/repository.ts`, backed for now by an
-in-memory implementation — state resets on restart and is not shared across
-processes.
+**Amazon Aurora DSQL** — serverless distributed PostgreSQL, accessed through
+Drizzle. See [docs/database.md](docs/database.md) for setup and the migration.
 
-Adopting a database means implementing that interface once and changing a single
-line in `src/lib/db.ts`.
+Everything above storage talks to the `Repository` interface in
+`src/lib/repository.ts`. Which implementation is used depends on the
+environment:
+
+```bash
+export PGHOST=<cluster-id>.dsql.<region>.on.aws   # use Aurora DSQL
+```
+
+With `PGHOST` unset, an in-memory implementation backs local development, so
+`npm run dev` needs no AWS credentials. State resets on restart. Force either
+with `DB_DRIVER=dsql` or `DB_DRIVER=memory`.
 
 ## Development users
 
@@ -81,16 +88,22 @@ src/
   components/              UI components
   lib/
     types.ts               shared contract types between workstreams
-    repository.ts          storage interface — doubles as the schema spec
-    memory-repository.ts   in-memory implementation
-    db.ts                  single swap point for storage
+    repository.ts          storage interface
+    schema.ts              Drizzle tables
+    dsql.ts                Aurora DSQL pool + transaction helper
+    dsql-repository.ts     Aurora DSQL implementation
+    memory-repository.ts   in-memory implementation (local development)
+    db.ts                  driver selection
     auth.ts                STUB — owned by TM1
     scores.ts              STUB — owned by TM2
     subreddits.ts          subreddit + subscription + ban service
     comments.ts            threading, sorting, moderation
     seed.ts                shared development fixtures
+drizzle/
+  0000_init.sql            migration — authoritative DDL
 docs/
   integration-contract.md  work division and integration seams
+  database.md              Aurora DSQL setup and constraints
 ```
 
 ## Bundler note
